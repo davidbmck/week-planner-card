@@ -784,21 +784,22 @@ export class WeekPlannerCard extends LitElement {
         this._updateEvents();
     }
 
-    _subscribeToWeatherForecast() {
-        this._loading++;
-        this._updateLoader();
-        let loadingWeather = true;
-        this.hass.connection.subscribeMessage((event) => {
-            this._weatherForecast = event.forecast ?? [];
-            if (loadingWeather) {
-                this._loading--;
-                loadingWeather = false;
-            }
-        }, {
-            type: 'weather/subscribe_forecast',
-            forecast_type: this._weather.useTwiceDaily ? 'twice_daily' : 'daily',
-            entity_id: this._weather.entity
-        });
+    async _subscribeToWeatherForecast() {
+        try {
+            await this.hass.connection.subscribeMessage((event) => {
+                this._weatherForecast = event.forecast ?? [];
+                // Calendar completion renders forecasts received during a refresh.
+                if (this._loading === 0) {
+                    this._updateCard();
+                }
+            }, {
+                type: 'weather/subscribe_forecast',
+                forecast_type: this._weather.useTwiceDaily ? 'twice_daily' : 'daily',
+                entity_id: this._weather.entity
+            });
+        } catch (error) {
+            console.warn('Error while subscribing to weather forecast:', error);
+        }
     }
 
     _updateEvents() {
