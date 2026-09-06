@@ -37,7 +37,7 @@ The maintenance direction is to:
 - Improve fixed-layout and kiosk behaviour, including opt-in bounded-height handling.
 - Accept sensible compatibility and maintenance improvements that fit these goals.
 
-Planned reliability work is tracked in [weather independence (#2)](https://github.com/davidbmck/week-planner-card/issues/2), [calendar scheduling (#3)](https://github.com/davidbmck/week-planner-card/issues/3), [refresh failure recovery (#4)](https://github.com/davidbmck/week-planner-card/issues/4), and [browser/connection lifecycle (#5)](https://github.com/davidbmck/week-planner-card/issues/5). [Bounded-height layouts (#6)](https://github.com/davidbmck/week-planner-card/issues/6) are also planned. These are follow-on improvements, not features already delivered by the baseline.
+Weather independence is addressed in the current source by [#2](https://github.com/davidbmck/week-planner-card/issues/2). Further reliability work is tracked in [calendar scheduling (#3)](https://github.com/davidbmck/week-planner-card/issues/3), [refresh failure recovery (#4)](https://github.com/davidbmck/week-planner-card/issues/4), and [browser/connection lifecycle (#5)](https://github.com/davidbmck/week-planner-card/issues/5). [Bounded-height layouts (#6)](https://github.com/davidbmck/week-planner-card/issues/6) are also planned. These are follow-on improvements, not features delivered by the v1.15.2 baseline; see [releases](https://github.com/davidbmck/week-planner-card/releases) for published versions.
 
 ## Installation
 
@@ -214,6 +214,8 @@ Replace the navigation path with a dashboard/view that exists in your installati
 ## Weather
 
 Forecast coverage depends on the weather entity; requesting 21 planner days does not create a 21-day forecast. The card subscribes to daily forecasts by default. Clicking the displayed forecast opens the weather entity's more-info dialog.
+
+In the current source, weather subscription setup failures and missing forecast events do not block calendar refresh. Received forecasts update the display immediately when calendar loading is idle, or when an in-progress calendar refresh completes.
 
 `weather` accepts an entity string shorthand (condition icon only by default):
 
