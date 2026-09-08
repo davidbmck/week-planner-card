@@ -53,7 +53,7 @@ export class WeekPlannerCard extends LitElement {
     static styles = styles;
 
     _initialized = false;
-    _loading = 0;
+    _refreshing = false;
     _events = {};
     _calendarEvents = {};
     _calendars;
@@ -91,7 +91,7 @@ export class WeekPlannerCard extends LitElement {
     _loader;
     _showNavigation;
     _navigationOffset = 0;
-    _updateEventsTimeouts = [];
+    _updateEventsTimeout = null;
     _calendarErrors = [];
 
     /**
@@ -749,7 +749,7 @@ export class WeekPlannerCard extends LitElement {
     }
 
     _updateLoader() {
-        if (this._loading > 0) {
+        if (this._refreshing) {
             this._loader.style.display = 'inherit';
         } else {
             this._loader.style.display = 'none';
@@ -789,7 +789,7 @@ export class WeekPlannerCard extends LitElement {
             await this.hass.connection.subscribeMessage((event) => {
                 this._weatherForecast = event.forecast ?? [];
                 // Calendar completion renders forecasts received during a refresh.
-                if (this._loading === 0) {
+                if (!this._refreshing) {
                     this._updateCard();
                 }
             }, {
@@ -802,15 +802,16 @@ export class WeekPlannerCard extends LitElement {
         }
     }
 
-    _updateEvents() {
-        if (this._loading > 0) {
+    async _updateEvents() {
+        if (this._refreshing) {
             return;
         }
 
-        this._loading++;
+        this._refreshing = true;
         this._updateLoader();
 
-        this._clearUpdateEventsTimeouts();
+        clearTimeout(this._updateEventsTimeout);
+        this._updateEventsTimeout = null;
 
         this._events = {};
         this._calendarEvents = {};
@@ -829,7 +830,7 @@ export class WeekPlannerCard extends LitElement {
         }
 
         let calendarNumber = 0;
-        this._calendars.forEach(calendar => {
+        await Promise.allSettled(this._calendars.map(async calendar => {
             if (!calendar.entity || !this.hass.states[calendar.entity]) {
                 return;
             }
@@ -846,20 +847,19 @@ export class WeekPlannerCard extends LitElement {
                     sorting: calendarNumber
                 }
             }
-            let currentCalendarNumber = calendarNumber;
-            this._loading++;
+            let currentCalendarNumber = calendarNumber++;
 
             // Determine entity type (calendar or todo)
             const entityDomain = calendar.entity.split('.')[0];
 
             if (entityDomain === 'todo') {
                 // Fetch todo items using WebSocket API (same as official HA frontend)
-                this.hass.callWS({
-                    type: 'todo/item/list',
-                    entity_id: calendar.entity
-                }).then(response => {
+                try {
+                    const response = await this.hass.callWS({
+                        type: 'todo/item/list',
+                        entity_id: calendar.entity
+                    });
                     if (this._startDate.toISO() !== runStartdate) {
-                        this._loading--;
                         return;
                     }
 
@@ -916,20 +916,17 @@ export class WeekPlannerCard extends LitElement {
                         const fullDay = !hasTime || (dueDate.hour === 0 && dueDate.minute === 0);
                         this._addEvent(event, dueDate, dueDate, fullDay, calendar, false);
                     });
-
-                    this._loading--;
-                }).catch(error => {
+                } catch (error) {
                     this._calendarErrors[currentCalendarNumber] = 'Error while fetching todo list "' + calendar.entity + '": ' + (error.error ?? 'Unknown error');
-                    this._loading--;
-                });
+                }
             } else {
                 // Fetch calendar events using REST API (existing logic)
-                this.hass.callApi(
-                    'get',
-                    'calendars/' + calendar.entity + '?start=' + encodeURIComponent(startDate.toISO()) + '&end=' + encodeURIComponent(endDate.toISO())
-                ).then(response => {
+                try {
+                    const response = await this.hass.callApi(
+                        'get',
+                        'calendars/' + calendar.entity + '?start=' + encodeURIComponent(startDate.toISO()) + '&end=' + encodeURIComponent(endDate.toISO())
+                    );
                     if (this._startDate.toISO() !== runStartdate) {
-                        this._loading--;
                         return;
                     }
 
@@ -953,37 +950,18 @@ export class WeekPlannerCard extends LitElement {
                             this._addEvent(event, startDate, endDate, fullDay, calendar);
                         }
                     });
-
-                    this._loading--;
-                }).catch(error => {
+                } catch (error) {
                     this._calendarErrors[currentCalendarNumber] = 'Error while fetching calendar "' + calendar.entity + '": ' + (error.error ?? 'Unknown error');
-                    this._loading--;
-                });
+                }
             }
-            calendarNumber++;
-        });
+        }));
 
-        let checkLoading = window.setInterval(() => {
-            if (this._loading === 0) {
-                clearInterval(checkLoading);
-                this._updateCard();
-                this._updateLoader();
-
-                this._updateEventsTimeouts.push(
-                    window.setTimeout(() => {
-                        this._updateEvents();
-                    }, this._updateInterval * 1000)
-                );
-            }
-        }, 50);
-
-        this._loading--;
-    }
-
-    _clearUpdateEventsTimeouts() {
-        this._updateEventsTimeouts.forEach(timeout => {
-            clearTimeout(timeout);
-        });
+        this._refreshing = false;
+        this._updateCard();
+        this._updateLoader();
+        this._updateEventsTimeout = window.setTimeout(() => {
+            this._updateEvents();
+        }, this._updateInterval * 1000);
     }
 
     _isFilterEvent(event, calendarFilter) {
