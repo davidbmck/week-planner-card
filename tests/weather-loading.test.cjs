@@ -11,19 +11,17 @@ const cardClass = source.slice(source.indexOf('export class WeekPlannerCard'))
     .replace('export class WeekPlannerCard', 'globalThis.WeekPlannerCard = class WeekPlannerCard');
 
 function setup(subscribe, calendarResponse) {
-    const intervals = new Map();
     const timeouts = new Map();
     const warnings = [];
     let nextId = 0;
     const timers = {
-        setInterval: callback => { intervals.set(++nextId, callback); return nextId; },
+        setInterval: () => { throw new Error('Calendar refresh must not poll'); },
         setTimeout: callback => { timeouts.set(++nextId, callback); return nextId; },
-        clearInterval: id => intervals.delete(id),
         clearTimeout: id => timeouts.delete(id),
     };
     const context = {
         LitElement: class {}, styles: {}, DateTime, LuxonSettings: Settings, LuxonInfo: Info,
-        window: timers, clearInterval: timers.clearInterval, clearTimeout: timers.clearTimeout,
+        window: timers, clearTimeout: timers.clearTimeout,
         console: { warn: (...args) => warnings.push(args) },
     };
     vm.runInNewContext(cardClass, context);
@@ -52,7 +50,6 @@ function setup(subscribe, calendarResponse) {
         card, warnings, requests: () => requests,
         finishRefresh: async () => {
             await new Promise(resolve => setImmediate(resolve));
-            for (const callback of [...intervals.values()]) callback();
         },
         nextRefresh: () => {
             assert.equal(timeouts.size, 1, 'a later calendar refresh must be scheduled');
@@ -73,14 +70,14 @@ for (const [name, subscribe, warningCount] of [
         const run = setup(subscribe);
         run.card._updateEvents();
         await run.finishRefresh();
-        assert.equal(run.card._loading, 0);
+        assert.equal(run.card._refreshing, false);
         assert.equal(run.card._loader.style.display, 'none');
         assert.equal(run.card._days[0].events.length, 1);
         assert.equal(run.warnings.length, warningCount);
         run.nextRefresh();
         await run.finishRefresh();
         assert.equal(run.requests(), 2);
-        assert.equal(run.card._loading, 0);
+        assert.equal(run.card._refreshing, false);
         assert.equal(run.card._days[0].events.length, 1);
     });
 }
@@ -112,7 +109,7 @@ test('late and subsequent forecasts display without waiting for the next calenda
     assert.equal(run.card._days[0].weather.temperature, 18);
     assert.equal(run.card._days[0].events[0], eventKey);
     assert.equal(run.requests(), 1);
-    assert.equal(run.card._loading, 0);
+    assert.equal(run.card._refreshing, false);
 });
 
 test('forecast received during calendar load displays when that load completes', async () => {
@@ -126,11 +123,11 @@ test('forecast received during calendar load displays when that load completes',
     run.card._weather.useTwiceDaily = true;
     run.card._updateEvents();
     emit(forecast(21.7));
-    assert.equal(run.card._loading, 1, 'weather must not decrement calendar loading');
+    assert.equal(run.card._refreshing, true, 'weather must not complete the calendar refresh');
     assert.equal(run.card._days, undefined, 'do not render an incomplete calendar refresh');
     resolveCalendar([]);
     await run.finishRefresh();
-    assert.equal(run.card._loading, 0);
+    assert.equal(run.card._refreshing, false);
     assert.equal(run.card._days[0].weather.temperature, 22);
     run.nextRefresh();
     assert.equal(run.requests(), 2);
