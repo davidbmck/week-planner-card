@@ -37,7 +37,7 @@ The maintenance direction is to:
 - Improve fixed-layout and kiosk behaviour, including opt-in bounded-height handling.
 - Accept sensible compatibility and maintenance improvements that fit these goals.
 
-Weather independence ([#2](https://github.com/davidbmck/week-planner-card/issues/2)) and async calendar scheduling ([#3](https://github.com/davidbmck/week-planner-card/issues/3)) are addressed in the current source. Further reliability work is tracked in [refresh failure recovery (#4)](https://github.com/davidbmck/week-planner-card/issues/4) and [browser/connection lifecycle (#5)](https://github.com/davidbmck/week-planner-card/issues/5). [Bounded-height layouts (#6)](https://github.com/davidbmck/week-planner-card/issues/6) are also planned. These are follow-on improvements, not features delivered by the v1.15.2 baseline; see [releases](https://github.com/davidbmck/week-planner-card/releases) for published versions.
+Weather independence ([#2](https://github.com/davidbmck/week-planner-card/issues/2)), async calendar scheduling ([#3](https://github.com/davidbmck/week-planner-card/issues/3)), and calendar refresh failure recovery ([#4](https://github.com/davidbmck/week-planner-card/issues/4)) are addressed in the current source. Further reliability work is tracked in [browser/connection lifecycle (#5)](https://github.com/davidbmck/week-planner-card/issues/5). [Bounded-height layouts (#6)](https://github.com/davidbmck/week-planner-card/issues/6) are also planned. These are follow-on improvements, not features delivered by the v1.15.2 baseline; see [releases](https://github.com/davidbmck/week-planner-card/releases) for published versions.
 
 ## Installation
 
@@ -163,7 +163,9 @@ For the entire current month, use `days: month` with `startingDay: month`. With 
 
 ## Calendars and todo lists
 
-Calendar and todo requests run concurrently. Once all requests settle, the card updates and schedules one refresh after `updateInterval` seconds, without polling for completion. Requests that never settle can still block later calendar refreshes; timeout and failure recovery are tracked in [#4](https://github.com/davidbmck/week-planner-card/issues/4).
+Calendar and todo requests run concurrently, each with a fixed 30-second timeout. Existing events remain displayed while requests are pending. After requests settle or time out, successful calendars replace their data and failed calendars retain their last successful event snapshots. A successful empty response clears that calendar’s old events. Errors are shown on the card, and another refresh is scheduled after `updateInterval` seconds, including after failures.
+
+If every calendar fails, the card keeps its displayed date range and events until a later refresh succeeds. With partial success, cached events from failed calendars remain on their original dates within the displayed range. Late responses from timed-out requests are ignored; results for an obsolete configuration or navigation selection are discarded. No YAML changes are required. Browser reconnect handling and weather subscription lifecycle work remain [#5](https://github.com/davidbmck/week-planner-card/issues/5).
 
 Each entry under `calendars` must be an object with an `entity` key, whether it refers to `calendar.*` or `todo.*`.
 

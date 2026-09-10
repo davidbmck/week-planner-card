@@ -54,6 +54,7 @@ function setup(calendars = [{ entity: 'calendar.one' }]) {
     }
     return {
         card, timeouts, requests,
+        refreshTimers: () => [...timeouts.values()].filter(timer => timer.delay === 7000),
         tick: () => new Promise(resolve => setImmediate(resolve)),
         nextRefresh: () => {
             assert.equal(timeouts.size, 1);
@@ -70,7 +71,7 @@ test('initial load and repeated periodic refreshes complete without polling', as
     run.card._waitForHassAndConfig();
     for (let cycle = 0; cycle < 3; cycle++) {
         assert.equal(run.requests.length, cycle + 1);
-        assert.equal(run.timeouts.size, 0, 'do not schedule the next refresh until requests settle');
+        assert.equal(run.refreshTimers().length, 0, 'do not schedule the next refresh until requests settle');
         assert.equal(run.card._loader.style.display, 'inherit');
         const request = run.requests[cycle];
         assert.equal(request.args[0], 'get');
@@ -96,7 +97,7 @@ test('calendars start concurrently and settle independently, retaining per-calen
     run.requests[2].resolve([event('Third')]);
     await run.tick();
     assert.equal(run.card._days, undefined, 'wait for all requests before rendering');
-    assert.equal(run.timeouts.size, 0);
+    assert.equal(run.refreshTimers().length, 0);
     run.requests[0].resolve([event('First')]);
     await refresh;
     const rendered = Array.from(run.card._days[0].events, key => run.card._calendarEvents[key]);
@@ -122,7 +123,7 @@ for (const fails of [false, true]) {
         assert.equal(run.requests[0].args[0].entity_id, 'todo.list');
         run.requests[1].resolve([event('Calendar')]);
         await run.tick();
-        assert.equal(run.timeouts.size, 0);
+        assert.equal(run.refreshTimers().length, 0);
         if (fails) {
             run.requests[0].reject({ error: 'offline' });
         } else {
@@ -156,11 +157,13 @@ test('navigation replaces the pending refresh timer and in-flight refresh calls 
     run.card._handleNavigationNextClick();
     assert.equal(run.requests.length, 2);
     assert.equal(run.timeouts.has(oldTimer), false);
-    assert.equal(run.timeouts.size, 0);
-    assert.equal(run.card._startDate.toISO(), originalDate.plus({ days: 7 }).toISO());
+    assert.equal(run.refreshTimers().length, 0);
+    const nextDate = originalDate.plus({ days: 7 });
+    assert.equal(new URL(run.requests[1].args[1], 'https://ha.test/').searchParams.get('start'), nextDate.toISO());
+    assert.equal(run.card._startDate.toISO(), originalDate.toISO(), 'keep the displayed range until completion');
     await run.card._updateEvents();
     assert.equal(run.requests.length, 2);
-    run.requests[1].resolve([event('Next week', run.card._startDate)]);
+    run.requests[1].resolve([event('Next week', nextDate)]);
     await run.tick();
     assert.equal(run.card._days[0].events.length, 1);
     assert.equal(run.timeouts.size, 1);
