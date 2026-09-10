@@ -93,6 +93,7 @@ export class WeekPlannerCard extends LitElement {
     _navigationOffset = 0;
     _updateEventsTimeout = null;
     _calendarErrors = [];
+    _calendarData = new Map();
 
     /**
      * Get config element
@@ -802,166 +803,212 @@ export class WeekPlannerCard extends LitElement {
         }
     }
 
+    async _fetchCalendar(calendar, startDate, endDate) {
+        let timeout;
+        try {
+            // Race only the request: late responses never reach event processing.
+            const request = calendar.entity.split('.')[0] === 'todo'
+                ? this.hass.callWS({ type: 'todo/item/list', entity_id: calendar.entity })
+                : this.hass.callApi(
+                    'get',
+                    'calendars/' + calendar.entity + '?start=' + encodeURIComponent(startDate.toISO()) + '&end=' + encodeURIComponent(endDate.toISO())
+                );
+            return await Promise.race([
+                request,
+                new Promise((resolve, reject) => {
+                    timeout = window.setTimeout(() => {
+                        reject(new Error('Request timed out after 30 seconds'));
+                    }, 30000);
+                })
+            ]);
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
     async _updateEvents() {
         if (this._refreshing) {
             return;
         }
 
         this._refreshing = true;
-        this._updateLoader();
-
         clearTimeout(this._updateEventsTimeout);
         this._updateEventsTimeout = null;
+        const config = this._config;
+        const navigationOffset = this._navigationOffset;
 
-        this._events = {};
-        this._calendarEvents = {};
+        try {
+            this._updateLoader();
+            const startDate = this._getStartDate();
+            const numberOfDays = this._numberOfDaysIsMonth ? startDate.daysInMonth : this._numberOfDays;
+            const endDate = startDate.plus({ days: numberOfDays });
+            const now = DateTime.now();
 
-        this._startDate = this._getStartDate();
-        if (this._numberOfDaysIsMonth) {
-            this._numberOfDays = this._startDate.daysInMonth;
-        }
-        let startDate = this._startDate;
-        let endDate = this._startDate.plus({ days: this._numberOfDays });
-        let now = DateTime.now();
-        let runStartdate = this._startDate.toISO();
+            if (this._weather && this._weatherForecast === null) {
+                this._subscribeToWeatherForecast();
+            }
 
-        if (this._weather && this._weatherForecast === null) {
-            this._subscribeToWeatherForecast();
-        }
+            const calendars = this._calendars.filter(calendar => calendar.entity && (
+                this.hass.states[calendar.entity] || this._calendarData.has(calendar)
+            ));
+            const results = await Promise.allSettled(calendars.map(async (calendar, index) => {
+                if (!this.hass.states[calendar.entity]) {
+                    throw new Error('Entity is unavailable');
+                }
+                calendar = {
+                    ...calendar,
+                    name: calendar.name || this.hass.formatEntityAttributeValue(this.hass.states[calendar.entity], 'friendly_name'),
+                    sorting: calendar.sorting || index
+                };
+                const response = await this._fetchCalendar(calendar, startDate, endDate);
+                return this._buildCalendarEvents(response, calendar, startDate, endDate, now);
+            }));
 
-        let calendarNumber = 0;
-        await Promise.allSettled(this._calendars.map(async calendar => {
-            if (!calendar.entity || !this.hass.states[calendar.entity]) {
+            // Configuration/navigation may change while requests are in flight.
+            if (this._config !== config || this._navigationOffset !== navigationOffset) {
                 return;
             }
 
-            if (!calendar.name) {
-                calendar = {
-                    ...calendar,
-                    name: this.hass.formatEntityAttributeValue(this.hass.states[calendar.entity], 'friendly_name')
-                }
-            }
-            if (!calendar.sorting) {
-                calendar = {
-                    ...calendar,
-                    sorting: calendarNumber
-                }
-            }
-            let currentCalendarNumber = calendarNumber++;
-
-            // Determine entity type (calendar or todo)
-            const entityDomain = calendar.entity.split('.')[0];
-
-            if (entityDomain === 'todo') {
-                // Fetch todo items using WebSocket API (same as official HA frontend)
-                try {
-                    const response = await this.hass.callWS({
-                        type: 'todo/item/list',
-                        entity_id: calendar.entity
-                    });
-                    if (this._startDate.toISO() !== runStartdate) {
-                        return;
+            const data = { events: {}, calendarEvents: {} };
+            const calendarData = new Map();
+            const errors = [];
+            let successes = 0;
+            results.forEach((result, index) => {
+                const calendar = calendars[index];
+                let source;
+                if (result.status === 'fulfilled') {
+                    successes++;
+                    source = result.value;
+                    calendarData.set(calendar, source);
+                    errors[index] = '';
+                } else {
+                    const kind = calendar.entity.split('.')[0] === 'todo' ? 'todo list' : 'calendar';
+                    errors[index] = 'Error while fetching ' + kind + ' "' + calendar.entity + '": '
+                        + (result.reason?.error ?? result.reason?.message ?? 'Unknown error');
+                    if (this._calendarData.has(calendar)) {
+                        source = this._calendarData.get(calendar);
+                        calendarData.set(calendar, source);
                     }
-
-                    this._calendarErrors[currentCalendarNumber] = '';
-
-                    const items = response.items ?? [];
-                    items.forEach(item => {
-                        // Only show items with due dates
-                        if (!item.due) {
-                            return;
-                        }
-
-                        // Parse the due date (item.due is an ISO string)
-                        const dueDate = DateTime.fromISO(item.due);
-
-                        if (!dueDate.isValid) {
-                            console.warn('Invalid due date for todo item:', item);
-                            return;
-                        }
-
-                        // Check if due date is within the visible range
-                        if (dueDate < startDate || dueDate > endDate) {
-                            return;
-                        }
-
-                        if (this._hidePastEvents && dueDate < now) {
-                            return;
-                        }
-
-                        // Create event-like object from todo item
-                        // Add strikethrough for completed items
-                        const isCompleted = item.status === 'completed';
-                        const summary = isCompleted ? `<s>${item.summary}</s>` : item.summary;
-
-                        // Check if due date has a time component
-                        const hasTime = item.due.includes('T');
-
-                        const event = {
-                            summary: summary,
-                            description: item.description ?? null,
-                            start: hasTime ? { dateTime: item.due } : { date: item.due },
-                            end: hasTime ? { dateTime: item.due } : { date: item.due },
-                            // Todo-specific metadata
-                            isTodoItem: true,
-                            todoUid: item.uid,
-                            todoStatus: item.status
-                        };
-
-                        if (this._isFilterEvent(event, calendar.filter ?? '')) {
-                            return;
-                        }
-
-                        // Determine if full day based on whether time is specified
-                        const fullDay = !hasTime || (dueDate.hour === 0 && dueDate.minute === 0);
-                        this._addEvent(event, dueDate, dueDate, fullDay, calendar, false);
-                    });
-                } catch (error) {
-                    this._calendarErrors[currentCalendarNumber] = 'Error while fetching todo list "' + calendar.entity + '": ' + (error.error ?? 'Unknown error');
                 }
+                if (source) {
+                    Object.entries(source.calendarEvents).forEach(([key, event]) => {
+                        this._mergeCalendarEvent(key, event, data);
+                    });
+                }
+            });
+
+            this._calendarErrors = errors;
+            // On total failure keep the displayed range as well as its events.
+            if (successes > 0 || !this._days || calendars.length === 0) {
+                const previous = {
+                    _events: this._events, _calendarEvents: this._calendarEvents,
+                    _startDate: this._startDate, _numberOfDays: this._numberOfDays,
+                    _days: this._days
+                };
+                try {
+                    this._events = data.events;
+                    this._calendarEvents = data.calendarEvents;
+                    this._startDate = startDate;
+                    this._numberOfDays = numberOfDays;
+                    this._updateCard();
+                } catch (error) {
+                    Object.assign(this, previous);
+                    throw error;
+                }
+                this._calendarData = calendarData;
             } else {
-                // Fetch calendar events using REST API (existing logic)
-                try {
-                    const response = await this.hass.callApi(
-                        'get',
-                        'calendars/' + calendar.entity + '?start=' + encodeURIComponent(startDate.toISO()) + '&end=' + encodeURIComponent(endDate.toISO())
-                    );
-                    if (this._startDate.toISO() !== runStartdate) {
-                        return;
-                    }
-
-                    this._calendarErrors[currentCalendarNumber] = '';
-
-                    response.forEach(event => {
-                        if (this._isFilterEvent(event, calendar.filter ?? '')) {
-                            return;
-                        }
-
-                        let startDate = this._convertApiDate(event.start);
-                        let endDate = this._convertApiDate(event.end);
-                        if (this._hidePastEvents && endDate < now) {
-                            return;
-                        }
-                        let fullDay = this._isFullDay(startDate, endDate);
-
-                        if (!fullDay && !this._isSameDay(startDate, endDate)) {
-                            this._handleMultiDayEvent(event, startDate, endDate, calendar);
-                        } else {
-                            this._addEvent(event, startDate, endDate, fullDay, calendar);
-                        }
-                    });
-                } catch (error) {
-                    this._calendarErrors[currentCalendarNumber] = 'Error while fetching calendar "' + calendar.entity + '": ' + (error.error ?? 'Unknown error');
-                }
+                this._updateCard();
             }
-        }));
+        } catch (error) {
+            this._error = 'Error while refreshing calendars: ' + (error?.error ?? error?.message ?? 'Unknown error');
+            console.warn('Error while refreshing calendars:', error);
+        } finally {
+            this._refreshing = false;
+            this._updateEventsTimeout = window.setTimeout(() => {
+                this._updateEvents();
+            }, this._updateInterval * 1000);
+            this._updateLoader();
+        }
+    }
 
-        this._refreshing = false;
-        this._updateCard();
-        this._updateLoader();
-        this._updateEventsTimeout = window.setTimeout(() => {
-            this._updateEvents();
-        }, this._updateInterval * 1000);
+    _buildCalendarEvents(response, calendar, startDate, endDate, now) {
+        const data = { events: {}, calendarEvents: {}, startDate };
+        if (calendar.entity.split('.')[0] === 'todo') {
+            const items = response.items ?? [];
+            items.forEach(item => {
+                // Only show items with due dates
+                if (!item.due) {
+                    return;
+                }
+
+                // Parse the due date (item.due is an ISO string)
+                const dueDate = DateTime.fromISO(item.due);
+
+                if (!dueDate.isValid) {
+                    console.warn('Invalid due date for todo item:', item);
+                    return;
+                }
+
+                // Check if due date is within the visible range
+                if (dueDate < startDate || dueDate > endDate) {
+                    return;
+                }
+
+                if (this._hidePastEvents && dueDate < now) {
+                    return;
+                }
+
+                // Create event-like object from todo item
+                // Add strikethrough for completed items
+                const isCompleted = item.status === 'completed';
+                const summary = isCompleted ? `<s>${item.summary}</s>` : item.summary;
+
+                // Check if due date has a time component
+                const hasTime = item.due.includes('T');
+
+                const event = {
+                    summary: summary,
+                    description: item.description ?? null,
+                    start: hasTime ? { dateTime: item.due } : { date: item.due },
+                    end: hasTime ? { dateTime: item.due } : { date: item.due },
+                    // Todo-specific metadata
+                    isTodoItem: true,
+                    todoUid: item.uid,
+                    todoStatus: item.status
+                };
+
+                if (this._isFilterEvent(event, calendar.filter ?? '')) {
+                    return;
+                }
+
+                // Determine if full day based on whether time is specified
+                const fullDay = !hasTime || (dueDate.hour === 0 && dueDate.minute === 0);
+                this._addEvent(event, dueDate, dueDate, fullDay, calendar, false, data);
+            });
+        } else {
+            response.forEach(event => {
+                if (this._isFilterEvent(event, calendar.filter ?? '')) {
+                    return;
+                }
+
+                let startDate = this._convertApiDate(event.start);
+                let endDate = this._convertApiDate(event.end);
+                if (!startDate?.isValid || !endDate?.isValid) {
+                    throw new Error('Invalid calendar event dates');
+                }
+                if (this._hidePastEvents && endDate < now) {
+                    return;
+                }
+                let fullDay = this._isFullDay(startDate, endDate);
+
+                if (!fullDay && !this._isSameDay(startDate, endDate)) {
+                    this._handleMultiDayEvent(event, startDate, endDate, calendar, data);
+                } else {
+                    this._addEvent(event, startDate, endDate, fullDay, calendar, false, data);
+                }
+            });
+        }
+        return data;
     }
 
     _isFilterEvent(event, calendarFilter) {
@@ -969,7 +1016,7 @@ export class WeekPlannerCard extends LitElement {
             || calendarFilter && event.summary.match(calendarFilter);
     }
 
-    _addEvent(event, startDate, endDate, fullDay, calendar, multiDay) {
+    _addEvent(event, startDate, endDate, fullDay, calendar, multiDay, data) {
         multiDay = multiDay ?? false;
 
         if (
@@ -979,11 +1026,6 @@ export class WeekPlannerCard extends LitElement {
             return;
         }
 
-        const dateKey = startDate.toISODate();
-        if (!this._events.hasOwnProperty(dateKey)) {
-            this._events[dateKey] = [];
-        }
-
         const title = this._filterEventSummary(event, calendar);
 
         let eventKey = startDate.toISO() + '-' + endDate.toISO() + '-' + title;
@@ -991,38 +1033,55 @@ export class WeekPlannerCard extends LitElement {
             eventKey = startDate.toISO() + '-' + endDate.toISO() + '-' + title + '-' + calendar.entity;
         }
 
-        if (this._calendarEvents.hasOwnProperty(eventKey)) {
-            this._calendarEvents[eventKey].calendars.push(calendar.entity);
-            this._calendarEvents[eventKey].colors.push(calendar.color ?? 'inherit')
-            if (calendar.name && this._calendarEvents[eventKey].calendarNames.indexOf(calendar.name) === -1) {
-                this._calendarEvents[eventKey].calendarNames.push(calendar.name);
-            }
-            if (calendar.sorting < this._calendarEvents[eventKey].calendarSorting) {
-                this._calendarEvents[eventKey].calendarSorting = calendar.sorting;
+        this._mergeCalendarEvent(eventKey, {
+            summary: title,
+            description: event.description ?? null,
+            location: event.location ?? null,
+            start: startDate,
+            originalStart: this._convertApiDate(event.start),
+            end: endDate,
+            originalEnd: this._convertApiDate(event.end),
+            fullDay: fullDay,
+            multiDay: multiDay,
+            colors: [calendar.color ?? 'inherit'],
+            icon: calendar.icon ?? null,
+            calendars: [calendar.entity],
+            calendarSorting: calendar.sorting,
+            calendarNames: [calendar.name],
+            class: this._getEventClass(startDate, endDate, fullDay, multiDay),
+            // Preserve todo metadata if present
+            isTodoItem: event.isTodoItem ?? false,
+            todoUid: event.todoUid ?? null,
+            todoStatus: event.todoStatus ?? null
+        }, data);
+    }
+
+    _mergeCalendarEvent(eventKey, event, data) {
+        if (data.calendarEvents.hasOwnProperty(eventKey)) {
+            const existing = data.calendarEvents[eventKey];
+            existing.calendars.push(...event.calendars);
+            existing.colors.push(...event.colors);
+            event.calendarNames.forEach(name => {
+                if (name && existing.calendarNames.indexOf(name) === -1) {
+                    existing.calendarNames.push(name);
+                }
+            });
+            if (event.calendarSorting < existing.calendarSorting) {
+                existing.calendarSorting = event.calendarSorting;
             }
         } else {
-            this._calendarEvents[eventKey] = {
-                summary: title,
-                description: event.description ?? null,
-                location: event.location ?? null,
-                start: startDate,
-                originalStart: this._convertApiDate(event.start),
-                end: endDate,
-                originalEnd: this._convertApiDate(event.end),
-                fullDay: fullDay,
-                multiDay: multiDay,
-                colors: [calendar.color ?? 'inherit'],
-                icon: calendar.icon ?? null,
-                calendars: [calendar.entity],
-                calendarSorting: calendar.sorting,
-                calendarNames: [calendar.name],
-                class: this._getEventClass(startDate, endDate, fullDay, multiDay),
-                // Preserve todo metadata if present
-                isTodoItem: event.isTodoItem ?? false,
-                todoUid: event.todoUid ?? null,
-                todoStatus: event.todoStatus ?? null
+            // The per-calendar snapshot must remain independent of combined events.
+            data.calendarEvents[eventKey] = {
+                ...event,
+                calendars: [...event.calendars],
+                colors: [...event.colors],
+                calendarNames: [...event.calendarNames]
+            };
+            const dateKey = event.start.toISODate();
+            if (!data.events.hasOwnProperty(dateKey)) {
+                data.events[dateKey] = [];
             }
-            this._events[dateKey].push(eventKey);
+            data.events[dateKey].push(eventKey);
         }
     }
 
@@ -1108,15 +1167,15 @@ export class WeekPlannerCard extends LitElement {
         return classes.join(' ');
     }
 
-    _handleMultiDayEvent(event, startDate, endDate, calendar) {
+    _handleMultiDayEvent(event, startDate, endDate, calendar, data) {
         while (startDate < endDate) {
             let eventStartDate = startDate;
             startDate = startDate.plus({ days: 1 }).startOf('day');
             let eventEndDate = startDate < endDate ? startDate : endDate;
 
-            this._addEvent(event, eventStartDate, eventEndDate, this._isFullDay(eventStartDate, eventEndDate), calendar, true);
+            this._addEvent(event, eventStartDate, eventEndDate, this._isFullDay(eventStartDate, eventEndDate), calendar, true, data);
 
-            if (this._multiDayMode === 'single' && eventStartDate >= this._startDate) {
+            if (this._multiDayMode === 'single' && eventStartDate >= data.startDate) {
                 break;
             }
         }
