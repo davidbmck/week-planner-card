@@ -12,6 +12,7 @@
   },
   "scripts": {
     "watch": "parcel watch",
+    "test": "node --test",
     "build": "parcel build"
   },
   "repository": {
