@@ -37,7 +37,7 @@ The maintenance direction is to:
 - Improve fixed-layout and kiosk behaviour, including opt-in bounded-height handling.
 - Accept sensible compatibility and maintenance improvements that fit these goals.
 
-Weather independence ([#2](https://github.com/davidbmck/week-planner-card/issues/2)), async calendar scheduling ([#3](https://github.com/davidbmck/week-planner-card/issues/3)), and calendar refresh failure recovery ([#4](https://github.com/davidbmck/week-planner-card/issues/4)) are addressed in the current source. Further reliability work is tracked in [browser/connection lifecycle (#5)](https://github.com/davidbmck/week-planner-card/issues/5). [Bounded-height layouts (#6)](https://github.com/davidbmck/week-planner-card/issues/6) are also planned. These are follow-on improvements, not features delivered by the v1.15.2 baseline; see [releases](https://github.com/davidbmck/week-planner-card/releases) for published versions.
+Weather independence ([#2](https://github.com/davidbmck/week-planner-card/issues/2)), async calendar scheduling ([#3](https://github.com/davidbmck/week-planner-card/issues/3)), calendar refresh failure recovery ([#4](https://github.com/davidbmck/week-planner-card/issues/4)), and browser/connection lifecycle recovery ([#5](https://github.com/davidbmck/week-planner-card/issues/5)) are addressed in the current source. [Bounded-height layouts (#6)](https://github.com/davidbmck/week-planner-card/issues/6) are also planned. These are follow-on improvements, not features delivered by the v1.15.2 baseline; see [releases](https://github.com/davidbmck/week-planner-card/releases) for published versions.
 
 ## Installation
 
@@ -165,7 +165,11 @@ For the entire current month, use `days: month` with `startingDay: month`. With 
 
 Calendar and todo requests run concurrently, each with a fixed 30-second timeout. Existing events remain displayed while requests are pending. After requests settle or time out, successful calendars replace their data and failed calendars retain their last successful event snapshots. A successful empty response clears that calendar’s old events. Errors are shown on the card, and another refresh is scheduled after `updateInterval` seconds, including after failures.
 
-If every calendar fails, the card keeps its displayed date range and events until a later refresh succeeds. With partial success, cached events from failed calendars remain on their original dates within the displayed range. Late responses from timed-out requests are ignored; results for an obsolete configuration or navigation selection are discarded. No YAML changes are required. Browser reconnect handling and weather subscription lifecycle work remain [#5](https://github.com/davidbmck/week-planner-card/issues/5).
+If every calendar fails, the card keeps its displayed date range and events until a later refresh succeeds. With partial success, cached events from failed calendars remain on their original dates within the displayed range. Late responses from timed-out requests are ignored; results for an obsolete configuration or navigation selection are discarded. No YAML changes are required.
+
+Leaving the dashboard clears the card’s initialization/refresh timers, request deadlines, and weather/connection listeners. Returning, reconnecting to Home Assistant, or making the tab visible again resumes refresh automatically. Pending responses from an earlier connection lifecycle cannot replace newer data or restart detached timers.
+
+Home Assistant can recreate cards when reloading dashboard configuration after reconnect. The card retains the last successful calendar/todo snapshots in page memory, scoped to the HA connection, identical card configuration, and navigation offset (up to 32 snapshots per connection). Replacement cards restore these events even if the first refresh returns a temporary 404 or entities are still unavailable. A normal successful refresh replaces the retained data. This uses no browser storage and does not survive a full page reload.
 
 Each entry under `calendars` must be an object with an `entity` key, whether it refers to `calendar.*` or `todo.*`.
 
@@ -219,7 +223,7 @@ Replace the navigation path with a dashboard/view that exists in your installati
 
 Forecast coverage depends on the weather entity; requesting 21 planner days does not create a 21-day forecast. The card subscribes to daily forecasts by default. Clicking the displayed forecast opens the weather entity's more-info dialog.
 
-In the current source, weather subscription setup failures and missing forecast events do not block calendar refresh. Received forecasts update the display immediately when calendar loading is idle, or when an in-progress calendar refresh completes.
+In the current source, weather subscription setup failures and missing forecast events do not block calendar refresh. Received forecasts update the display immediately when calendar loading is idle, or when an in-progress calendar refresh completes. Only one weather subscription is active or pending per card; it is released when the card leaves the page or HA disconnects, then re-established on return/reconnect. Last-known forecasts remain visible during temporary interruptions.
 
 `weather` accepts an entity string shorthand (condition icon only by default):
 

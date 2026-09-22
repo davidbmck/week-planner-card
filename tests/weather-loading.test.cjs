@@ -20,7 +20,7 @@ function setup(subscribe, calendarResponse) {
         clearTimeout: id => timeouts.delete(id),
     };
     const context = {
-        LitElement: class {}, styles: {}, DateTime, LuxonSettings: Settings, LuxonInfo: Info,
+        LitElement: class { isConnected = true; }, styles: {}, DateTime, LuxonSettings: Settings, LuxonInfo: Info,
         window: timers, clearTimeout: timers.clearTimeout,
         console: { warn: (...args) => warnings.push(args) },
     };
