@@ -51,6 +51,9 @@ const ICONS_NIGHT = {
 
 export class WeekPlannerCard extends LitElement {
     static styles = styles;
+    // HA reloads Lovelace configuration on reconnect and can replace card instances.
+    // Keep only a bounded, page-memory cache; connection objects survive socket reconnects.
+    static _snapshots = new WeakMap();
 
     _initialized = false;
     _refreshing = false;
@@ -94,6 +97,118 @@ export class WeekPlannerCard extends LitElement {
     _updateEventsTimeout = null;
     _calendarErrors = [];
     _calendarData = new Map();
+    _initializationTimeout = null;
+    _refreshGeneration = 0;
+    _pendingRequests = new Set();
+    _connection = null;
+    _weatherSubscription = null;
+
+    connectedCallback() {
+        super.connectedCallback();
+        this._initialized = true;
+        document.addEventListener('visibilitychange', this._handleVisibilityChange);
+        this._waitForHassAndConfig();
+    }
+
+    disconnectedCallback() {
+        super.disconnectedCallback();
+        this._initialized = false;
+        document.removeEventListener('visibilitychange', this._handleVisibilityChange);
+        this._stopConnection();
+        this._cancelRefresh();
+    }
+
+    set hass(hass) {
+        const previousConnection = this._hass?.connection;
+        this._hass = hass;
+        if (this._initialized && this.isConnected && previousConnection !== hass?.connection) {
+            this._stopConnection();
+            this._cancelRefresh();
+            this._waitForHassAndConfig();
+        }
+    }
+
+    get hass() {
+        return this._hass;
+    }
+
+    _handleVisibilityChange = () => {
+        if (document.visibilityState === 'visible') {
+            this._cancelRefresh();
+            this._waitForHassAndConfig();
+        }
+    };
+
+    _handleConnectionReady = () => {
+        this._cancelRefresh();
+        this._stopWeatherSubscription();
+        this._waitForHassAndConfig();
+    };
+
+    _handleConnectionLost = () => {
+        this._cancelRefresh();
+        this._stopWeatherSubscription();
+    };
+
+    _stopConnection() {
+        this._connection?.removeEventListener('ready', this._handleConnectionReady);
+        this._connection?.removeEventListener('disconnected', this._handleConnectionLost);
+        this._connection = null;
+        this._stopWeatherSubscription();
+    }
+
+    _cancelRefresh() {
+        this._refreshGeneration++;
+        clearTimeout(this._initializationTimeout);
+        clearTimeout(this._updateEventsTimeout);
+        this._initializationTimeout = this._updateEventsTimeout = null;
+        this._pendingRequests.forEach(cancel => cancel());
+        this._pendingRequests.clear();
+        this._refreshing = false;
+        this._updateLoader();
+    }
+
+    _snapshotKey() {
+        return JSON.stringify([this._config, this._navigationOffset]);
+    }
+
+    _restoreSnapshot() {
+        if (this._days) return;
+        const snapshot = WeekPlannerCard._snapshots.get(this.hass.connection)?.get(this._snapshotKey());
+        if (!snapshot) return;
+        const data = { events: {}, calendarEvents: {} };
+        this._calendarData = new Map();
+        snapshot.calendars.forEach((source, index) => {
+            if (!source) return;
+            this._calendarData.set(this._calendars[index], source);
+            Object.entries(source.calendarEvents).forEach(([key, event]) => {
+                this._mergeCalendarEvent(key, event, data);
+            });
+        });
+        this._events = data.events;
+        this._calendarEvents = data.calendarEvents;
+        this._startDate = snapshot.startDate;
+        this._numberOfDays = snapshot.numberOfDays;
+        this._updateCard();
+    }
+
+    _saveSnapshot() {
+        const connection = this.hass.connection;
+        if (!connection) return;
+        let snapshots = WeekPlannerCard._snapshots.get(connection);
+        if (!snapshots) {
+            snapshots = new Map();
+            WeekPlannerCard._snapshots.set(connection, snapshots);
+        }
+        const key = this._snapshotKey();
+        snapshots.delete(key);
+        snapshots.set(key, {
+            calendars: this._calendars.map(calendar => this._calendarData.get(calendar)),
+            startDate: this._startDate,
+            numberOfDays: this._numberOfDays
+        });
+        if (snapshots.size > 32) snapshots.delete(snapshots.keys().next().value);
+    }
 
     /**
      * Get config element
@@ -158,6 +273,8 @@ export class WeekPlannerCard extends LitElement {
      * @param {Object} config
      */
     setConfig(config) {
+        const sameConfig = JSON.stringify(this._config) === JSON.stringify(config);
+        const previousData = this._calendars?.map(calendar => this._calendarData.get(calendar));
         this._config = config;
 
         if (!config.calendars) {
@@ -167,14 +284,23 @@ export class WeekPlannerCard extends LitElement {
         this._numberOfDaysIsMonth = this._isNumberOfDaysMonth(config.days ?? 7);
         this._title = config.title ?? null;
         this._calendars = config.calendars;
-        this._weather = this._getWeatherConfig(config.weather);
-        this._numberOfDays = this._getNumberOfDays(config.days ?? 7);
+        if (sameConfig && previousData) {
+            this._calendarData = new Map(this._calendars.flatMap((calendar, index) =>
+                previousData[index] ? [[calendar, previousData[index]]] : []));
+        }
+        const weather = this._getWeatherConfig(config.weather);
+        if (this._weather?.entity !== weather?.entity || this._weather?.useTwiceDaily !== weather?.useTwiceDaily) {
+            this._stopWeatherSubscription();
+            this._weatherForecast = null;
+        }
+        this._weather = weather;
+        this._numberOfDays = sameConfig ? this._numberOfDays : this._getNumberOfDays(config.days ?? 7);
         this._hideWeekend = config.hideWeekend ?? false;
         this._showNavigation = config.showNavigation ?? false;
         this._startingDay = config.startingDay ?? 'today';
         this._startingDayOffset = config.startingDayOffset ?? 0;
         this._showWeekDayText = config.showWeekDayText ?? true;
-        this._startDate = this._getStartDate();
+        this._startDate = sameConfig ? this._startDate : this._getStartDate();
         this._updateInterval = config.updateInterval ?? 60;
         this._noCardBackground = config.noCardBackground ?? false;
         this._eventBackground = config.eventBackground ?? 'var(--card-background-color, inherit)';
@@ -273,11 +399,6 @@ export class WeekPlannerCard extends LitElement {
     render() {
         if (!this._loader) {
             this._loader = this._getLoader();
-        }
-
-        if (!this._initialized) {
-            this._initialized = true;
-            this._waitForHassAndConfig();
         }
 
         let cardClasses = [];
@@ -750,6 +871,7 @@ export class WeekPlannerCard extends LitElement {
     }
 
     _updateLoader() {
+        if (!this._loader) this._loader = this._getLoader();
         if (this._refreshing) {
             this._loader.style.display = 'inherit';
         } else {
@@ -775,36 +897,79 @@ export class WeekPlannerCard extends LitElement {
     }
 
     _waitForHassAndConfig() {
+        clearTimeout(this._initializationTimeout);
+        this._initializationTimeout = null;
+        if (!this.isConnected) return;
         if (!this.hass || !this._calendars) {
-            window.setTimeout(() => {
+            this._initializationTimeout = window.setTimeout(() => {
                 this._waitForHassAndConfig();
-            }, 50)
+            }, 50);
             return;
         }
-
+        if (this._connection !== this.hass.connection) {
+            this._stopConnection();
+            this._connection = this.hass.connection;
+            this._connection?.addEventListener('ready', this._handleConnectionReady);
+            this._connection?.addEventListener('disconnected', this._handleConnectionLost);
+        }
+        this._restoreSnapshot();
         this._updateEvents();
     }
 
-    async _subscribeToWeatherForecast() {
+    async _unsubscribeWeather(unsubscribe) {
         try {
-            await this.hass.connection.subscribeMessage((event) => {
+            await unsubscribe();
+        } catch (error) {
+            console.warn('Error while unsubscribing from weather forecast:', error);
+        }
+    }
+
+    _stopWeatherSubscription() {
+        const subscription = this._weatherSubscription;
+        this._weatherSubscription = null;
+        if (subscription?.unsubscribe) this._unsubscribeWeather(subscription.unsubscribe);
+    }
+
+    async _subscribeToWeatherForecast() {
+        const connection = this.hass.connection;
+        const entity = this._weather?.entity;
+        const type = this._weather?.useTwiceDaily ? 'twice_daily' : 'daily';
+        const previous = this._weatherSubscription;
+        if (previous && previous.connection === connection && previous.entity === entity && previous.type === type) return;
+        this._stopWeatherSubscription();
+        if (!entity) {
+            this._weatherForecast = null;
+            return;
+        }
+        if (previous && (previous.entity !== entity || previous.type !== type)) this._weatherForecast = null;
+        const subscription = { connection, entity, type };
+        this._weatherSubscription = subscription;
+        try {
+            const unsubscribe = await connection.subscribeMessage((event) => {
+                if (this._weatherSubscription !== subscription || !this.isConnected) return;
                 this._weatherForecast = event.forecast ?? [];
                 // Calendar completion renders forecasts received during a refresh.
-                if (!this._refreshing) {
-                    this._updateCard();
-                }
+                if (!this._refreshing) this._updateCard();
             }, {
                 type: 'weather/subscribe_forecast',
-                forecast_type: this._weather.useTwiceDaily ? 'twice_daily' : 'daily',
-                entity_id: this._weather.entity
-            });
+                forecast_type: type,
+                entity_id: entity
+            }, { resubscribe: false });
+            // Detaching/reconnecting may happen before setup returns its unsubscribe.
+            if (this._weatherSubscription !== subscription) {
+                this._unsubscribeWeather(unsubscribe);
+            } else {
+                subscription.unsubscribe = unsubscribe;
+            }
         } catch (error) {
+            if (this._weatherSubscription === subscription) this._weatherSubscription = null;
             console.warn('Error while subscribing to weather forecast:', error);
         }
     }
 
     async _fetchCalendar(calendar, startDate, endDate) {
         let timeout;
+        let cancel;
         try {
             // Race only the request: late responses never reach event processing.
             const request = calendar.entity.split('.')[0] === 'todo'
@@ -816,6 +981,11 @@ export class WeekPlannerCard extends LitElement {
             return await Promise.race([
                 request,
                 new Promise((resolve, reject) => {
+                    cancel = () => {
+                        clearTimeout(timeout);
+                        reject(new Error('Refresh cancelled'));
+                    };
+                    this._pendingRequests.add(cancel);
                     timeout = window.setTimeout(() => {
                         reject(new Error('Request timed out after 30 seconds'));
                     }, 30000);
@@ -823,14 +993,16 @@ export class WeekPlannerCard extends LitElement {
             ]);
         } finally {
             clearTimeout(timeout);
+            this._pendingRequests.delete(cancel);
         }
     }
 
     async _updateEvents() {
-        if (this._refreshing) {
+        if (!this.isConnected || !this.hass || !this._calendars || this.hass.connection?.connected === false || this._refreshing) {
             return;
         }
 
+        const generation = this._refreshGeneration;
         this._refreshing = true;
         clearTimeout(this._updateEventsTimeout);
         this._updateEventsTimeout = null;
@@ -839,14 +1011,13 @@ export class WeekPlannerCard extends LitElement {
 
         try {
             this._updateLoader();
+            this._restoreSnapshot();
             const startDate = this._getStartDate();
             const numberOfDays = this._numberOfDaysIsMonth ? startDate.daysInMonth : this._numberOfDays;
             const endDate = startDate.plus({ days: numberOfDays });
             const now = DateTime.now();
 
-            if (this._weather && this._weatherForecast === null) {
-                this._subscribeToWeatherForecast();
-            }
+            this._subscribeToWeatherForecast();
 
             const calendars = this._calendars.filter(calendar => calendar.entity && (
                 this.hass.states[calendar.entity] || this._calendarData.has(calendar)
@@ -865,7 +1036,7 @@ export class WeekPlannerCard extends LitElement {
             }));
 
             // Configuration/navigation may change while requests are in flight.
-            if (this._config !== config || this._navigationOffset !== navigationOffset) {
+            if (generation !== this._refreshGeneration || this._config !== config || this._navigationOffset !== navigationOffset) {
                 return;
             }
 
@@ -916,6 +1087,7 @@ export class WeekPlannerCard extends LitElement {
                     throw error;
                 }
                 this._calendarData = calendarData;
+                if (successes > 0) this._saveSnapshot();
             } else {
                 this._updateCard();
             }
@@ -923,6 +1095,8 @@ export class WeekPlannerCard extends LitElement {
             this._error = 'Error while refreshing calendars: ' + (error?.error ?? error?.message ?? 'Unknown error');
             console.warn('Error while refreshing calendars:', error);
         } finally {
+            // An obsolete request must not restart timers or finish a newer refresh.
+            if (generation !== this._refreshGeneration) return;
             this._refreshing = false;
             this._updateEventsTimeout = window.setTimeout(() => {
                 this._updateEvents();
@@ -1188,7 +1362,7 @@ export class WeekPlannerCard extends LitElement {
 
         const weatherState = this._weather ? this.hass.states[this._weather.entity] : null;
         let weatherForecast = {};
-        this._weatherForecast?.forEach((forecast) => {
+        (weatherState ? this._weatherForecast : null)?.forEach((forecast) => {
             // Only use day time forecasts
             if (forecast.hasOwnProperty('is_daytime') && forecast.is_daytime === false) {
                 return;
@@ -1252,7 +1426,9 @@ export class WeekPlannerCard extends LitElement {
                 days.push({
                     date: startDate,
                     events: events,
-                    weather: isOutsideMonth ? null : (weatherForecast[dateKey] ?? null),
+                    weather: isOutsideMonth ? null : (weatherForecast[dateKey]
+                        ?? (this._weather && !weatherState ? this._days?.find(day => day.date.toISODate() === dateKey)?.weather : null)
+                        ?? null),
                     class: this._getDayClass(startDate) + (isOutsideMonth ? ' outside-month' : ''),
                     isOutsideMonth: isOutsideMonth
                 });

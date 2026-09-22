@@ -25,7 +25,7 @@ function setup(config = {}) {
         clearTimeout: id => timers.delete(id),
     };
     const context = {
-        LitElement: class {}, styles: {}, DateTime, LuxonSettings: Settings, LuxonInfo: Info,
+        LitElement: class { isConnected = true; }, styles: {}, DateTime, LuxonSettings: Settings, LuxonInfo: Info,
         window: timerApi, clearTimeout: timerApi.clearTimeout,
         console: { warn: (...args) => warnings.push(args) },
         html: (strings, ...values) => strings.reduce((text, part, i) => text + part + (values[i] ?? ''), ''),
