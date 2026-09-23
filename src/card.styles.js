@@ -44,6 +44,141 @@ export default css`
         --weather-icon-size: 20px;
         --weather-temperature-font-size: 0.8em;
     }
+
+    /* Bounded mode only: retain the existing unbounded layout and compact YAML. */
+    ha-card.bounded {
+        box-sizing: border-box;
+        overflow: hidden;
+    }
+
+    ha-card.bounded .card-content {
+        box-sizing: border-box;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    ha-card.bounded .card-title {
+        flex: none;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    ha-card.bounded .errors {
+        flex: none;
+        max-height: 4em;
+        overflow: hidden;
+    }
+
+    ha-card.bounded .planner {
+        flex: 1;
+        min-height: 0;
+        align-items: flex-start;
+        align-content: flex-start;
+        overflow: hidden;
+    }
+
+    ha-card.bounded .planner > .day {
+        box-sizing: border-box;
+        margin-bottom: 0;
+        overflow: hidden;
+    }
+
+    ha-card.bounded .planner .day:has(.weather) .date {
+        min-height: var(--weather-icon-size);
+    }
+
+    ha-card.bounded .planner .event .inner,
+    ha-card.bounded .planner .event .title span {
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+
+    ha-card.bounded .planner .event .additionalColor {
+        flex-shrink: 0;
+    }
+
+    ha-card.bounded .planner .day[data-density="1"],
+    ha-card.bounded .planner .day[data-density="2"],
+    ha-card.bounded .planner .day[data-density="3"] {
+        --event-padding: 2px 5px;
+        --event-spacing: 2px;
+    }
+
+    ha-card.bounded .planner .day:is([data-density="2"], [data-density="3"]) .description,
+    ha-card.bounded .planner .day:is([data-density="2"], [data-density="3"]) .location,
+    ha-card.bounded .planner [data-bounded-hidden],
+    .bounded-more[hidden] {
+        display: none !important;
+    }
+
+    ha-card.bounded .planner .day[data-density="2"] .title span {
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        overflow: hidden;
+    }
+
+    ha-card.bounded .planner .day[data-density="3"] .title span,
+    ha-card.bounded .planner .day:is([data-density="2"], [data-density="3"]) .time,
+    ha-card.bounded .planner .day[data-density="2"] .event.fullday .title span {
+        display: block;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* The compact all-day treatment is inspired by upstream PR #363. */
+    ha-card.bounded .planner .day:is([data-density="2"], [data-density="3"]) .event.fullday .inner {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+    }
+
+    ha-card.bounded .planner .day:is([data-density="2"], [data-density="3"]) .event.fullday .time {
+        flex-shrink: 0;
+        max-width: 45%;
+        margin-bottom: 0;
+    }
+
+    ha-card.bounded .planner .day:is([data-density="2"], [data-density="3"]) .event.fullday .title {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .bounded-more {
+        box-sizing: border-box;
+        width: 100%;
+        border: 0;
+        text-align: left;
+        color: var(--primary-text-color);
+        font-family: inherit;
+    }
+
+    button.bounded-more {
+        cursor: pointer;
+    }
+
+    .height-warning {
+        display: none;
+    }
+
+    ha-card.height-too-small .card-content > :not(.height-warning) {
+        visibility: hidden;
+    }
+
+    ha-card.height-too-small .height-warning {
+        display: block;
+        position: absolute;
+        inset: 12px;
+        overflow: hidden;
+    }
+
+    .container.overflow-list .day {
+        width: 100%;
+    }
   
     .errors {
         white-space: pre-line;
