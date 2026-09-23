@@ -187,6 +187,8 @@ export class WeekPlannerCardEditor extends LitElement {
                         ${this.addBooleanField('noCardBackground', 'No card background')}
                         ${this.addTextField('eventBackground', 'Override events background color')}
                         ${this.addBooleanField('compact', 'Compact mode')}
+                        ${this.addTextField('height', 'Fixed height in pixels (blank is automatic)', 'number')}
+                        ${this.addBooleanField('overflowClickable', 'Allow opening overflow events (fixed height only)', false)}
                     `
                 )}
                 ${this.addExpansionPanel(

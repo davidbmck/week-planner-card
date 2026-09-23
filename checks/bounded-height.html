@@ -1,0 +1,67 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  body { margin: 20px; font: 16px Arial; background: #202124; color: #eee; }
+  #mount { width: 1100px; }
+</style>
+<div id="mount"></div>
+<script type="module">
+  customElements.define('ha-card', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' }).innerHTML = `<style>
+        :host { display: block; position: relative; background: #303134; border: 1px solid #666; border-radius: 12px; transition: height .3s; }
+        ::slotted(.card-content) { padding: 16px; }
+      </style><slot></slot>`;
+    }
+  });
+  await import('/dist/week-planner-card.js');
+  const Planner = customElements.get('week-planner-card');
+  const layout = Planner.prototype._layoutBoundedCard;
+  Planner.prototype._layoutBoundedCard = function () {
+    this.layoutPasses = (this.layoutPasses || 0) + 1;
+    return layout.call(this);
+  };
+  window.createPlanner = async (overrides = {}, count = 6) => {
+    document.querySelector('#mount').replaceChildren();
+    const card = document.createElement('week-planner-card');
+    const now = new Date(Date.now());
+    now.setHours(0, 0, 0, 0);
+    const events = [];
+    for (let offset = -40; offset < 80; offset++) {
+      for (let event = 0; event < count; event++) {
+        const start = new Date(now);
+        start.setDate(start.getDate() + offset);
+        start.setHours(8 + event % 12);
+        const end = new Date(start.getTime() + 3600000);
+        events.push({ summary: `Event ${event + 1}: a title that can wrap on narrow days`,
+          description: 'Extra details with multiple words to exercise the available height.', location: 'A meeting room',
+          start: event % 3 ? { dateTime: start.toISOString() } : { date: start.toLocaleDateString('en-CA') },
+          end: event % 3 ? { dateTime: end.toISOString() } : { date: new Date(new Date(start).setDate(start.getDate() + 1)).toLocaleDateString('en-CA') },
+        });
+      }
+    }
+    card.setConfig({ calendars: [{ entity: 'calendar.test' }], compact: true, days: 21,
+      startingDay: 'monday', showDescription: true, showLocation: true,
+      columns: { extraLarge: 7, large: 7, medium: 7, small: 7, extraSmall: 7 }, ...overrides });
+    card.hass = { states: { 'calendar.test': { attributes: {} }, 'weather.test': { attributes: {} } },
+      connection: { connected: true, addEventListener() {}, removeEventListener() {},
+        subscribeMessage: async callback => {
+          callback({ forecast: Array.from({ length: 30 }, (_, index) => ({
+            datetime: new Date(now.getTime() + index * 86400000).toISOString(),
+            condition: 'sunny', temperature: 23, templow: 10,
+          })) });
+          return () => {};
+        },
+      },
+      callApi: async () => events, localize: () => 'Close',
+      formatEntityAttributeValue: (_state, key, value) => value ?? key,
+      formatEntityState: (_state, value) => value,
+    };
+    window.card = card;
+    document.querySelector('#mount').append(card);
+    await card.updateComplete;
+    return true;
+  };
+  window.ready = true;
+</script>

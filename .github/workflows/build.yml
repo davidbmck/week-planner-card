@@ -24,3 +24,7 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+      - name: Install browser for layout checks
+        run: npx playwright install --with-deps chromium
+      - name: Check bounded-height layout
+        run: node checks/bounded-height.cjs

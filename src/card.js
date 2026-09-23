@@ -2,6 +2,7 @@ import { html, LitElement } from 'lit';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { DateTime, Settings as LuxonSettings, Info as LuxonInfo } from 'luxon';
 import styles from './card.styles';
+import { allocateRows, dayPriority, fitEvents } from './bounded-layout';
 import clear_night from 'data-url:./icons/clear_night.png';
 import cloudy from 'data-url:./icons/cloudy.png';
 import fog from 'data-url:./icons/fog.png';
@@ -102,12 +103,15 @@ export class WeekPlannerCard extends LitElement {
     _pendingRequests = new Set();
     _connection = null;
     _weatherSubscription = null;
+    _boundedObserver = null;
+    _boundedFrame = null;
 
     connectedCallback() {
         super.connectedCallback();
         this._initialized = true;
         document.addEventListener('visibilitychange', this._handleVisibilityChange);
         this._waitForHassAndConfig();
+        if (this._height) this._scheduleBoundedLayout();
     }
 
     disconnectedCallback() {
@@ -116,6 +120,153 @@ export class WeekPlannerCard extends LitElement {
         document.removeEventListener('visibilitychange', this._handleVisibilityChange);
         this._stopConnection();
         this._cancelRefresh();
+        this._stopBoundedLayout();
+    }
+
+    updated() {
+        if (this._height) {
+            this._scheduleBoundedLayout();
+        } else if (this._boundedApplied || this._boundedObserver || this._boundedFrame !== null) {
+            this._resetBoundedLayout();
+            this._stopBoundedLayout();
+        }
+    }
+
+    _stopBoundedLayout() {
+        this._boundedObserver?.disconnect();
+        this._boundedObserver = null;
+        this._boundedObserved = null;
+        this.renderRoot?.removeEventListener('load', this._scheduleBoundedLayout, true);
+        document.fonts?.removeEventListener('loadingdone', this._scheduleBoundedLayout);
+        if (this._boundedFrame !== null) cancelAnimationFrame(this._boundedFrame);
+        this._boundedFrame = null;
+    }
+
+    _scheduleBoundedLayout = () => {
+        if (!this.isConnected || this._boundedFrame !== null) return;
+        this._boundedFrame = requestAnimationFrame(() => {
+            this._boundedFrame = null;
+            this._layoutBoundedCard();
+        });
+    };
+
+    _resetBoundedLayout() {
+        this._boundedApplied = false;
+        const card = this.renderRoot?.querySelector('ha-card');
+        card?.classList.remove('height-too-small');
+        this.renderRoot?.querySelectorAll('.planner > .day').forEach(day => {
+            day.style.removeProperty('height');
+            day.removeAttribute('data-density');
+        });
+        this.renderRoot?.querySelectorAll('[data-bounded-hidden]').forEach(event => {
+            event.removeAttribute('data-bounded-hidden');
+        });
+    }
+
+    _layoutBoundedCard() {
+        if (!this._height || !this.isConnected) return;
+        const card = this.renderRoot.querySelector('ha-card');
+        const container = this.renderRoot.querySelector('.planner');
+        if (!container) return;
+        this._observeBoundedLayout(container);
+        if (!container.clientWidth) return;
+        this._resetBoundedLayout();
+        this._boundedApplied = true;
+        const elements = [...container.querySelectorAll(':scope > .day:not(.header)')];
+        const today = DateTime.now().startOf('day');
+        const days = elements.map(element => ({
+            element,
+            priority: element.dataset.dayKey ? dayPriority(DateTime.fromISO(element.dataset.dayKey).diff(today, 'days').days) : 0,
+            events: [...element.querySelectorAll('.event')],
+            indicator: element.querySelector('.bounded-more'),
+            sizes: [],
+        }));
+        const footprint = element => {
+            if (!element) return 0;
+            const style = getComputedStyle(element);
+            return element.getBoundingClientRect().height + parseFloat(style.marginTop || 0) + parseFloat(style.marginBottom || 0);
+        };
+        const rows = [];
+        let top;
+        days.forEach(day => {
+            if (day.element.offsetTop !== top) {
+                rows.push([]);
+                top = day.element.offsetTop;
+            }
+            rows[rows.length - 1].push(day);
+        });
+        const headerHeight = days.length ? days[0].element.getBoundingClientRect().top - container.getBoundingClientRect().top : 0;
+        const gap = parseFloat(getComputedStyle(container).rowGap) || 0;
+        // Measure each presentation at the actual column width (including fonts,
+        // custom styling, title wrapping and maxDayEvents), without painting a trial layout.
+        for (let level = 0; level <= 3; level++) {
+            days.forEach(day => {
+                day.element.dataset.density = level;
+                if (day.indicator) {
+                    day.indicator.hidden = false;
+                    day.indicator.querySelector('.bounded-count').textContent = `+${day.indicator.dataset.total}`;
+                }
+            });
+            days.forEach(day => {
+                const events = day.element.querySelector('.events');
+                const fixed = events ? events.getBoundingClientRect().top - day.element.getBoundingClientRect().top : 0;
+                // Adjacent vertical margins collapse. Summing individual footprints
+                // overestimates the required height (notably with card_mod margins).
+                // Use occupied prefix bounds so overflow decisions match the browser.
+                let previousBottom = 0;
+                const heights = day.events.map(event => {
+                    const bottom = event.getBoundingClientRect().bottom - events.getBoundingClientRect().top
+                        + parseFloat(getComputedStyle(event).marginBottom || 0);
+                    const height = bottom - previousBottom;
+                    previousBottom = bottom;
+                    return height;
+                });
+                const indicator = footprint(day.indicator);
+                const total = Number(day.indicator?.dataset.total || 0);
+                const empty = footprint(events?.querySelector('.none'));
+                const height = fixed + heights.reduce((sum, height) => sum + height, 0) + (total > heights.length ? indicator : 0) + empty;
+                day.sizes.push({ fixed, heights, indicator,
+                    height,
+                    minimum: Math.min(height, fixed + (total ? indicator : empty)),
+                });
+            });
+        }
+        const available = container.clientHeight - headerHeight - gap * Math.max(0, rows.length - 1);
+        const layout = allocateRows(rows, available);
+        card.classList.toggle('height-too-small', layout.tooSmall);
+        if (!layout.tooSmall) {
+            rows.forEach((row, index) => row.forEach((day, dayIndex) => {
+                const level = layout.densities[index][dayIndex];
+                const size = day.sizes[level];
+                day.element.dataset.density = level;
+                day.element.style.height = `${layout.heights[index]}px`;
+                if (!day.indicator) return;
+                const total = Number(day.indicator.dataset.total);
+                const count = fitEvents(size.heights, layout.heights[index] - size.fixed, size.indicator, total);
+                day.events.forEach((event, eventIndex) => event.toggleAttribute('data-bounded-hidden', eventIndex >= count));
+                day.indicator.hidden = count === total;
+                day.indicator.querySelector('.bounded-count').textContent = `+${total - count}`;
+                day.indicator.setAttribute('aria-label', `${total - count} ${this._language.moreEvents}`);
+            }));
+        }
+    }
+
+    _observeBoundedLayout(container) {
+        // ResizeObserver delivers final geometry after the synchronous layout pass.
+        // Observe even a hidden card so revealing its parent will trigger allocation.
+        // Rebind after Lit replaces days, and disconnect on detach.
+        if (!this._boundedObserver) {
+            this._boundedObserver = new ResizeObserver(this._scheduleBoundedLayout);
+            this.renderRoot.addEventListener('load', this._scheduleBoundedLayout, true);
+            document.fonts?.addEventListener('loadingdone', this._scheduleBoundedLayout);
+        }
+        const observed = [this, container, ...this.renderRoot.querySelectorAll('.planner .events, .planner .date, .planner .header, .card-title, .errors')];
+        if (!this._boundedObserved || observed.length !== this._boundedObserved.length
+            || observed.some((element, index) => element !== this._boundedObserved[index])) {
+            this._boundedObserver.disconnect();
+            observed.forEach(element => this._boundedObserver.observe(element));
+            this._boundedObserved = observed;
+        }
     }
 
     set hass(hass) {
@@ -263,6 +414,7 @@ export class WeekPlannerCard extends LitElement {
             _config: { type: Object },
             _error: { type: String },
             _currentEventDetails: { type: Object },
+            _overflowDay: { type: String },
             _hideCalendars: { type: Array }
         }
     }
@@ -273,6 +425,13 @@ export class WeekPlannerCard extends LitElement {
      * @param {Object} config
      */
     setConfig(config) {
+        const height = config.height == null || config.height === '' ? null : Number(config.height);
+        if (height !== null && (!Number.isInteger(height) || height < 80)) {
+            throw new Error('height must be an integer of at least 80 pixels');
+        }
+        this._height = height;
+        this._overflowClickable = config.overflowClickable ?? false;
+        this._overflowDay = null;
         const sameConfig = JSON.stringify(this._config) === JSON.stringify(config);
         const previousData = this._calendars?.map(calendar => this._calendarData.get(calendar));
         this._config = config;
@@ -343,6 +502,7 @@ export class WeekPlannerCard extends LitElement {
                 fullDay: 'Entire day',
                 noEvents: 'No events',
                 moreEvents: 'More events',
+                heightTooSmall: 'Increase height or reduce the number of days.',
                 today: 'Today',
                 tomorrow: 'Tomorrow',
                 yesterday: 'Yesterday',
@@ -408,10 +568,12 @@ export class WeekPlannerCard extends LitElement {
         if (this._compact) {
             cardClasses.push('compact');
         }
+        if (this._height) cardClasses.push('bounded');
 
         const cardStyles = [
             '--event-background-color: ' + this._eventBackground + ';'
         ];
+        if (this._height) cardStyles.push(`height: ${this._height}px; min-height: ${this._height}px; max-height: ${this._height}px;`);
         if (this._columns.extraLarge) {
             cardStyles.push('--days-columns: ' + this._columns.extraLarge + ';');
         }
@@ -439,15 +601,17 @@ export class WeekPlannerCard extends LitElement {
                         html`<h1 class="card-title">${this._title}</h1>` :
                         ''
                     }
-                    <div class="container${this._actions ? ' hasActions' : ''}" @click="${this._handleContainerClick}">
+                    <div class="container planner${this._actions ? ' hasActions' : ''}" @click="${this._handleContainerClick}">
                         ${this._renderHeader()}
                         ${this._renderWeekDays()}
                         ${this._renderDays()}
                     </div>
-                    ${this._renderEventDetailsDialog()}
+                    ${this._height ? html`<div class="height-warning" role="status">${this._language.heightTooSmall}</div>` : this._renderEventDetailsDialog()}
                     ${this._loader}
                 </div>
             </ha-card>
+            ${this._height ? this._renderEventDetailsDialog() : ''}
+            ${this._height && this._overflowClickable ? this._renderOverflowDialog() : ''}
         `;
     }
 
@@ -558,7 +722,7 @@ export class WeekPlannerCard extends LitElement {
                     return html``;
                 }
                 return html`
-                    <div class="day ${day.class}" data-date="${day.date.day}" data-weekday="${day.date.weekday}" data-month="${day.date.month}" data-year="${day.date.year}" data-week="${day.date.weekNumber}">
+                    <div class="day ${day.class}" data-day-key="${day.date.toISODate()}" data-date="${day.date.day}" data-weekday="${day.date.weekday}" data-month="${day.date.month}" data-year="${day.date.year}" data-week="${day.date.weekNumber}">
                         <div class="date">
                             ${this._dayFormat ?
                                 unsafeHTML(day.date.toFormat(this._dayFormat)) :
@@ -610,7 +774,7 @@ export class WeekPlannerCard extends LitElement {
         `;
     }
 
-    _renderEvents(day) {
+    _renderEvents(day, overflowDialog = false) {
         const dayEvents = [];
         day.events.map((eventKey) => {
             if (!this._calendarEvents[eventKey]) {
@@ -646,8 +810,9 @@ export class WeekPlannerCard extends LitElement {
             return this._renderNoEvents();
         }
 
+        const total = dayEvents.length;
         let moreEvents = false;
-        if (this._maxDayEvents > 0 && dayEvents.length > this._maxDayEvents) {
+        if (!overflowDialog && this._maxDayEvents > 0 && dayEvents.length > this._maxDayEvents) {
             dayEvents.splice(this._maxDayEvents);
             moreEvents = true;
         }
@@ -735,7 +900,7 @@ export class WeekPlannerCard extends LitElement {
                     </div>
                 `
             })}
-            ${moreEvents ?
+            ${this._height && !overflowDialog ? this._renderBoundedMore(day, total) : moreEvents ?
                 html`
                     <div class="more">
                         ${this._language.moreEvents}
@@ -744,6 +909,32 @@ export class WeekPlannerCard extends LitElement {
                 ''
             }
         `;
+    }
+
+    _renderBoundedMore(day, total) {
+        if (this._overflowClickable) {
+            return html`<button class="more bounded-more" data-total="${total}" hidden @click="${e => {
+                e.stopPropagation();
+                this._overflowDay = day.date.toISODate();
+            }}"><span class="bounded-count"></span></button>`;
+        }
+        return html`<div class="more bounded-more" data-total="${total}" hidden><span class="bounded-count"></span></div>`;
+    }
+
+    _renderOverflowDialog() {
+        const day = this._days?.find(day => day.date.toISODate() === this._overflowDay);
+        if (!day) return '';
+        const heading = day.date.toFormat(this._dateFormat);
+        return html`
+            <ha-dialog open header-title="${heading}" @closed="${() => { this._overflowDay = null; }}"
+                .heading="${html`<div class="header_title"><span>${heading}</span>
+                    <ha-icon-button .label="${this.hass?.localize('ui.dialogs.generic.close') ?? 'Close'}"
+                        dialogAction="close" class="header_button"><ha-icon icon="mdi:close"></ha-icon></ha-icon-button>
+                </div>`}">
+                <div class="container overflow-list"><div class="day"><div class="events">
+                    ${this._renderEvents(day, true)}
+                </div></div></div>
+            </ha-dialog>`;
     }
 
     _renderEventTime(event) {
@@ -1498,6 +1689,7 @@ export class WeekPlannerCard extends LitElement {
         }
 
         // Show the event details dialog for calendar events
+        this._overflowDay = null;
         this._currentEventDetails = event;
     }
 

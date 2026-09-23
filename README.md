@@ -17,6 +17,7 @@ A custom Home Assistant card showing a responsive overview of calendar entities,
 - [Actions](#actions)
 - [Weather](#weather)
 - [Columns](#columns)
+- [Fixed-height layouts](#fixed-height-layouts)
 - [Multi-day mode](#multi-day-mode)
 - [Styling](#styling)
 - [Examples](#examples)
@@ -37,7 +38,7 @@ The maintenance direction is to:
 - Improve fixed-layout and kiosk behaviour, including opt-in bounded-height handling.
 - Accept sensible compatibility and maintenance improvements that fit these goals.
 
-Weather independence ([#2](https://github.com/davidbmck/week-planner-card/issues/2)), async calendar scheduling ([#3](https://github.com/davidbmck/week-planner-card/issues/3)), calendar refresh failure recovery ([#4](https://github.com/davidbmck/week-planner-card/issues/4)), and browser/connection lifecycle recovery ([#5](https://github.com/davidbmck/week-planner-card/issues/5)) are addressed in the current source. [Bounded-height layouts (#6)](https://github.com/davidbmck/week-planner-card/issues/6) are also planned. These are follow-on improvements, not features delivered by the v1.15.2 baseline; see [releases](https://github.com/davidbmck/week-planner-card/releases) for published versions.
+Weather independence ([#2](https://github.com/davidbmck/week-planner-card/issues/2)), async calendar scheduling ([#3](https://github.com/davidbmck/week-planner-card/issues/3)), calendar refresh failure recovery ([#4](https://github.com/davidbmck/week-planner-card/issues/4)), browser/connection lifecycle recovery ([#5](https://github.com/davidbmck/week-planner-card/issues/5)), and opt-in [fixed-height layouts](#fixed-height-layouts) ([#6](https://github.com/davidbmck/week-planner-card/issues/6)) are addressed in the current source. These are follow-on improvements, not features delivered by the v1.15.2 baseline; see [releases](https://github.com/davidbmck/week-planner-card/releases) for published versions.
 
 ## Installation
 
@@ -105,6 +106,8 @@ Add a custom card through the dashboard editor or paste a card example below int
 | `noCardBackground` | boolean | `false` | Remove the card background, border and shadow. |
 | `eventBackground` | CSS colour | `var(--card-background-color, inherit)` | Event background. |
 | `compact` | boolean | `false` | Reduce spacing and font sizes; also affects default [column counts](#columns). |
+| `height` | integer | Unset | Fixed outer height in pixels, at least `80`. Enables staged compaction and intentional overflow; see [Fixed-height layouts](#fixed-height-layouts). Numeric strings from the editor are also accepted. |
+| `overflowClickable` | boolean | `false` | In fixed-height mode, make the overflow count a button that opens the day's full event list. Leave false for a passive kiosk count. |
 | `showTitle` | boolean | `true` | Show event titles in the overview; also controls visibility of todo checkboxes. |
 | `showDescription` | boolean | `false` | Show descriptions in the overview. |
 | `showLocation` | boolean | `false` | Show locations in the overview. |
@@ -148,6 +151,7 @@ Formats use [Luxon format tokens](https://moment.github.io/luxon/#/formatting?id
 | `fullDay` | `Entire day` | Label instead of the time for an all-day entry. |
 | `noEvents` | `No events` | Label for a displayed day with no visible entries. |
 | `moreEvents` | `More events` | Label when `maxDayEvents` hides extra entries; not an event count. |
+| `heightTooSmall` | `Increase height or reduce the number of days.` | Fixed-height fallback when date headings and overflow indicators cannot fit. |
 | `today` | `Today` | Heading text for today. |
 | `tomorrow` | `Tomorrow` | Heading text for tomorrow. |
 | `yesterday` | `Yesterday` | Heading text for yesterday. |
@@ -261,6 +265,45 @@ Column counts follow the card's CSS container width, not the browser window widt
 
 Override all five keys to keep a constant column count; see the [kiosk example](#fixed-seven-column-kiosk-layout).
 
+## Fixed-height layouts
+
+Add `height: 405` to keep the entire card, including padding, title, legend and navigation, within 405 pixels. The outer height stays fixed on quiet days too. Omit `height` to retain the existing content-driven layout. Existing `compact`, event limits, column settings and `custom:week-planner-card` YAML retain their meanings.
+
+When everything fits, presentation stays unchanged. When space runs out, the card works through these date priorities, relative to today:
+
+1. Past dates and dates seven or more days away.
+2. Two through six days away.
+3. Today and tomorrow, last.
+
+Within each priority it first tightens event spacing, then hides overview descriptions/locations and limits timed-event titles to two lines, then to one line if necessary. All-day events become single-line entries at the two-line stage; timed events keep their time line. Only then may it hide whole events and show a passive `+N` count. It reclaims lower-priority space before compacting higher-priority dates. Font sizes and column counts are not automatically changed by these stages.
+
+Rows have variable heights. A week containing today/tomorrow can use space reclaimed from past or distant weeks. All days within a row share its height: a quieter neighbour cannot donate additional vertical space within a single-row view. Row boundaries inside the card may move as data, available width and date priorities change; neighbouring dashboard cards stay in place. After fitting the prioritized content, any spare height is shared equally between rows instead of collecting at the bottom. Each day then restores the fullest presentation that fits its allocated row, so a busy date does not unnecessarily compact its quieter neighbours.
+
+The overflow count includes entries hidden by height or `maxDayEvents`, after calendar visibility filtering. It does not count filtered events or events excluded by the existing global `maxEvents` limit. Existing event order is preserved, and explicit event limits still apply to today/tomorrow. A day may show only its count if no complete event fits. If the headings and counts themselves cannot fit, the card displays `texts.heightTooSmall`; increase the height, use `compact: true`, reduce days, or adjust columns.
+
+For a kiosk, no action is needed and no overflow button is shown:
+
+```yaml
+type: custom:week-planner-card
+calendars:
+  - entity: calendar.family
+days: 21
+startingDay: monday
+compact: true
+height: 405
+overflowClickable: false
+columns:
+  extraLarge: 7
+  large: 7
+  medium: 7
+  small: 7
+  extraSmall: 7
+```
+
+On an interactive dashboard, `overflowClickable: true` opens the full available day list, including entries hidden by height or `maxDayEvents`. Normal event details and todo checkboxes remain available there. The planner itself never introduces internal scrolling; the optional dialog can scroll.
+
+Remove the old `card_mod` forced-height rule when enabling `height`; keep other styling. The card measures the actual rendered event geometry and recalculates after updates, resizing, fonts/images loading and reconnection. CSS that independently forces incompatible dimensions can still prevent content from fitting.
+
 ## Multi-day mode
 
 `multiDayMode` controls how events spanning days are displayed:
@@ -275,7 +318,7 @@ The current multi-day format fallback is `d LLL HH:mm`; the intended `multiDayTi
 
 ## Styling
 
-Use [card_mod](https://github.com/thomasloven/lovelace-card-mod) for custom CSS. The existing screenshot and examples illustrate the inherited layout. The card currently grows with content; a forced outer height does not provide intentional overflow handling. Opt-in bounded-height behaviour is planned in [#6](https://github.com/davidbmck/week-planner-card/issues/6).
+Use [card_mod](https://github.com/thomasloven/lovelace-card-mod) for custom CSS. The existing screenshot and examples illustrate the inherited layout. The card grows with content by default; use [fixed-height mode](#fixed-height-layouts) when you need a height constraint with intentional overflow handling.
 
 ### Day classes and attributes
 
@@ -490,6 +533,17 @@ calendars:
 dayFormat: >-
   '<span class="number">'d'</span> <span class="month">'MMMM'</span>'
 ```
+
+## Development checks
+
+Run `npm test` for the Node regression suite and `npm run build` for the production bundle. Fixed-height geometry also has real-browser checks:
+
+```sh
+npx playwright install chromium
+npm run test:browser
+```
+
+To use an existing Chromium installation, set `CHROMIUM_PATH` to its executable when running `npm run test:browser`. CI runs both suites. Browser fixtures use synthetic calendar data; live Home Assistant/kiosk validation is still needed for theme and `card_mod` interactions. Generated `dist/` files are not committed.
 
 ## Credits / lineage
 
