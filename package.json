@@ -14,7 +14,7 @@
     "watch": "parcel watch",
     "test": "node --test",
     "build": "parcel build",
-    "test:browser": "npm run build && node checks/bounded-height.cjs"
+    "test:browser": "npm run build && node checks/bounded-height.cjs && node checks/moon-phases.cjs"
   },
   "repository": {
     "type": "git",

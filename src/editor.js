@@ -171,6 +171,23 @@ export class WeekPlannerCardEditor extends LitElement {
                     `
                 )}
                 ${this.addExpansionPanel(
+                    'Moon phases',
+                    html`
+                        ${[
+                            ['newMoon', 'New moon'],
+                            ['firstQuarter', 'First quarter'],
+                            ['fullMoon', 'Full moon'],
+                            ['lastQuarter', 'Last quarter'],
+                        ].map(([key, label]) => html`
+                            ${this.addExpansionPanel(label, html`
+                                ${this.addBooleanField(`moonPhases.${key}.enabled`, 'Show phase')}
+                                ${this.addEntityPickerField(`moonPhases.${key}.previousEntity`, 'Previous timestamp')}
+                                ${this.addEntityPickerField(`moonPhases.${key}.nextEntity`, 'Next timestamp')}
+                            `)}
+                        `)}
+                    `
+                )}
+                ${this.addExpansionPanel(
                     'Override columns',
                     html`
                         <p>The number of columns is based on the size of the card.</p>
