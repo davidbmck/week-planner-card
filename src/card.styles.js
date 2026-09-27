@@ -297,6 +297,31 @@ export default css`
         font-size: var(--day-date-text-font-size);
     }
 
+    .container .day .date:has(.day-indicators) {
+        white-space: nowrap;
+    }
+
+    .container .day .day-indicators {
+        display: inline-flex;
+        align-items: center;
+        vertical-align: middle;
+        white-space: nowrap;
+        color: var(--secondary-text-color);
+        opacity: .72;
+    }
+
+    .container .day .day-indicators[hidden] {
+        display: none;
+    }
+
+    .container .day .day-indicator {
+        --mdc-icon-size: 1em;
+        width: 1em;
+        height: 1em;
+        font-size: var(--day-date-text-font-size);
+        flex: none;
+    }
+
     .container .day .weather {
         position: absolute;
         top: 0;

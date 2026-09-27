@@ -123,10 +123,27 @@ Add a custom card through the dashboard editor or paste a card example below int
 | `texts` | object | Built-in labels | Override labels; see [Texts](#texts). |
 | `actions` | object | Disabled | Card tap behaviour; see [Actions](#actions). |
 | `weather` | object or entity string | Disabled | Optional [Weather](#weather) forecast. |
+| `moonPhases` | object | Disabled | Optional [Moon phases](#moon-phases) from Home Assistant timestamp entities. |
 | `columns` | object | Responsive | Override [Columns](#columns) by card width. |
 | `multiDayMode` | string | `default` | `default`, `single` or `multiple`; see [Multi-day mode](#multi-day-mode). |
 
 Empty-day detection uses the day's event list before legend/`initiallyHidden` visibility filtering. Hiding a calendar does not necessarily remove its otherwise-empty day. Blank outside-month alignment cells are also retained.
+
+### Moon phases
+
+Moon phase icons appear beside the date heading when a configured timestamp falls on a visible day. Configure any of `newMoon`, `firstQuarter`, `fullMoon`, or `lastQuarter` independently. Each phase has an `enabled` switch and optional `previousEntity` and `nextEntity` sources; either valid source can display an icon on its own. The visual editor exposes the same fields.
+
+```yaml
+moonPhases:
+  fullMoon:
+    enabled: true
+    previousEntity: sensor.moon_astro_previous_full_moon
+    nextEntity: sensor.moon_astro_next_full_moon
+```
+
+The entity state must be a valid ISO date-time timestamp. The card converts its instant to the browser's local date, as it does for planner days. Missing, `unknown`, `unavailable`, or invalid states are ignored; changes appear with Home Assistant state updates. Only the supplied previous and next occurrences are shown, even when navigating farther. Moon indicators do not count as events or reveal otherwise-hidden empty days.
+
+Use card-mod to style `.day-indicators`, `.day-indicator.moon-phase`, or an individual phase such as `.day-indicator[data-phase="full-moon"]`. No moon-specific style options are added to the card configuration.
 
 ### Date formats and locale
 

@@ -50,6 +50,13 @@ const ICONS_NIGHT = {
   'lightning-rainy': storm_night
 };
 
+const MOON_PHASES = {
+    newMoon: { phase: 'new-moon', icon: 'mdi:moon-new', label: 'New moon' },
+    firstQuarter: { phase: 'first-quarter', icon: 'mdi:moon-first-quarter', label: 'First quarter' },
+    fullMoon: { phase: 'full-moon', icon: 'mdi:moon-full', label: 'Full moon' },
+    lastQuarter: { phase: 'last-quarter', icon: 'mdi:moon-last-quarter', label: 'Last quarter' },
+};
+
 export class WeekPlannerCard extends LitElement {
     static styles = styles;
     // HA reloads Lovelace configuration on reconnect and can replace card instances.
@@ -69,6 +76,8 @@ export class WeekPlannerCard extends LitElement {
     _compact;
     _language;
     _weather;
+    _moonPhases;
+    _moonSourceStates = new Map();
     _dateFormat;
     _timeFormat;
     _multiDayTimeFormat;
@@ -105,6 +114,7 @@ export class WeekPlannerCard extends LitElement {
     _weatherSubscription = null;
     _boundedObserver = null;
     _boundedFrame = null;
+    _moonObserver = null;
 
     connectedCallback() {
         super.connectedCallback();
@@ -121,15 +131,39 @@ export class WeekPlannerCard extends LitElement {
         this._stopConnection();
         this._cancelRefresh();
         this._stopBoundedLayout();
+        this._moonObserver?.disconnect();
+        this._moonObserver = null;
     }
 
     updated() {
+        this._observeMoonIndicators();
         if (this._height) {
             this._scheduleBoundedLayout();
         } else if (this._boundedApplied || this._boundedObserver || this._boundedFrame !== null) {
             this._resetBoundedLayout();
             this._stopBoundedLayout();
         }
+    }
+
+    _observeMoonIndicators() {
+        this._moonObserver?.disconnect();
+        const indicators = this.renderRoot.querySelectorAll('.day-indicators');
+        if (!indicators.length) return;
+        this._moonObserver ??= new ResizeObserver(() => this._fitMoonIndicators());
+        this.renderRoot.querySelectorAll('.day:has(.day-indicators), .day:has(.day-indicators) .date, .day:has(.day-indicators) .weather')
+            .forEach(element => this._moonObserver.observe(element));
+        this._fitMoonIndicators();
+    }
+
+    _fitMoonIndicators() {
+        this.renderRoot.querySelectorAll('.day-indicators').forEach(indicators => {
+            indicators.hidden = false;
+            const day = indicators.closest('.day');
+            const icon = indicators.getBoundingClientRect();
+            const rightEdge = day.getBoundingClientRect().right;
+            const weather = day.querySelector('.weather')?.getBoundingClientRect();
+            indicators.hidden = icon.right > rightEdge || (weather && icon.right > weather.left && icon.left < weather.right);
+        });
     }
 
     _stopBoundedLayout() {
@@ -272,6 +306,17 @@ export class WeekPlannerCard extends LitElement {
     set hass(hass) {
         const previousConnection = this._hass?.connection;
         this._hass = hass;
+        const sourceStates = new Map();
+        for (const phase of Object.values(this._moonPhases ?? {})) {
+            if (!phase?.enabled) continue;
+            for (const entity of [phase.previousEntity, phase.nextEntity]) {
+                if (entity) sourceStates.set(entity, hass?.states?.[entity]?.state);
+            }
+        }
+        if (sourceStates.size && [...sourceStates].some(([entity, state]) => this._moonSourceStates.get(entity) !== state)) {
+            this.requestUpdate();
+        }
+        this._moonSourceStates = sourceStates;
         if (this._initialized && this.isConnected && previousConnection !== hass?.connection) {
             this._stopConnection();
             this._cancelRefresh();
@@ -453,6 +498,7 @@ export class WeekPlannerCard extends LitElement {
             this._weatherForecast = null;
         }
         this._weather = weather;
+        this._moonPhases = config.moonPhases ?? {};
         this._numberOfDays = sameConfig ? this._numberOfDays : this._getNumberOfDays(config.days ?? 7);
         this._hideWeekend = config.hideWeekend ?? false;
         this._showNavigation = config.showNavigation ?? false;
@@ -712,6 +758,7 @@ export class WeekPlannerCard extends LitElement {
             return html``;
         }
 
+        const indicatorsByDate = this._getMoonIndicatorsByDate();
         return html`
             ${this._days.map((day) => {
                 if (day.isOutsideMonth) {
@@ -734,6 +781,7 @@ export class WeekPlannerCard extends LitElement {
                                     }
                                 `
                             }
+                            ${this._renderDayIndicators(indicatorsByDate.get(day.date.toISODate()))}
                         </div>
                         ${day.weather ?
                             html`
@@ -772,6 +820,41 @@ export class WeekPlannerCard extends LitElement {
                 `
             })}
         `;
+    }
+
+    _getMoonIndicatorsByDate() {
+        const byDate = new Map();
+        for (const [key, details] of Object.entries(MOON_PHASES)) {
+            const config = this._moonPhases?.[key];
+            if (!config?.enabled) continue;
+            const seenInstants = new Set();
+            for (const entity of [config.previousEntity, config.nextEntity]) {
+                const state = entity && this._hass?.states?.[entity]?.state;
+                if (typeof state !== 'string' || !/[T ]\d{2}:\d{2}/.test(state)) continue;
+                const instant = DateTime.fromISO(state.trim());
+                if (!instant.isValid || seenInstants.has(instant.toMillis())) continue;
+                seenInstants.add(instant.toMillis());
+                const date = instant.toLocal().toISODate();
+                if (!byDate.has(date)) byDate.set(date, []);
+                if (!byDate.get(date).some(indicator => indicator.phase === details.phase)) {
+                    byDate.get(date).push({ ...details, instant: instant.toMillis() });
+                }
+            }
+        }
+        return byDate;
+    }
+
+    _renderDayIndicators(indicators) {
+        if (!indicators?.length) return '';
+        return html`<span class="day-indicators">
+            ${indicators.map(indicator => html`<ha-icon
+                class="day-indicator moon-phase ${indicator.phase}"
+                data-indicator="moon-phase"
+                data-phase="${indicator.phase}"
+                icon="${indicator.icon}"
+                title="${indicator.label}"
+                aria-label="${indicator.label}"></ha-icon>`)}
+        </span>`;
     }
 
     _renderEvents(day, overflowDialog = false) {
