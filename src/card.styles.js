@@ -297,17 +297,11 @@ export default css`
         font-size: var(--day-date-text-font-size);
     }
 
-    .container .day .date:has(.day-indicators) {
-        white-space: nowrap;
-    }
-
     .container .day .day-indicators {
         display: inline-flex;
         align-items: center;
         vertical-align: middle;
         white-space: nowrap;
-        color: var(--secondary-text-color);
-        opacity: .72;
     }
 
     .container .day .day-indicators[hidden] {
@@ -320,6 +314,11 @@ export default css`
         height: 1em;
         font-size: var(--day-date-text-font-size);
         flex: none;
+    }
+
+    .day-indicator.moon-phase {
+        color: var(--secondary-text-color);
+        opacity: .72;
     }
 
     .container .day .weather {

@@ -122,6 +122,7 @@ export class WeekPlannerCard extends LitElement {
         document.addEventListener('visibilitychange', this._handleVisibilityChange);
         this._waitForHassAndConfig();
         if (this._height) this._scheduleBoundedLayout();
+        if (this.hasUpdated) this._observeMoonIndicators();
     }
 
     disconnectedCallback() {
@@ -133,6 +134,7 @@ export class WeekPlannerCard extends LitElement {
         this._stopBoundedLayout();
         this._moonObserver?.disconnect();
         this._moonObserver = null;
+        document.fonts?.removeEventListener('loadingdone', this._fitMoonIndicators);
     }
 
     updated() {
@@ -147,24 +149,45 @@ export class WeekPlannerCard extends LitElement {
 
     _observeMoonIndicators() {
         this._moonObserver?.disconnect();
+        document.fonts?.removeEventListener('loadingdone', this._fitMoonIndicators);
+        if (!this.isConnected) return;
         const indicators = this.renderRoot.querySelectorAll('.day-indicators');
         if (!indicators.length) return;
-        this._moonObserver ??= new ResizeObserver(() => this._fitMoonIndicators());
+        this._moonObserver ??= new ResizeObserver(this._fitMoonIndicators);
+        document.fonts?.addEventListener('loadingdone', this._fitMoonIndicators);
         this.renderRoot.querySelectorAll('.day:has(.day-indicators), .day:has(.day-indicators) .date, .day:has(.day-indicators) .weather')
             .forEach(element => this._moonObserver.observe(element));
         this._fitMoonIndicators();
     }
 
-    _fitMoonIndicators() {
+    _fitMoonIndicators = () => {
         this.renderRoot.querySelectorAll('.day-indicators').forEach(indicators => {
+            const date = indicators.parentElement;
+            // Preserve the heading's own flow, including custom multi-line HTML.
+            indicators.hidden = true;
+            const heightWithoutIndicators = date.getBoundingClientRect().height;
+            const text = document.createTreeWalker(date, NodeFilter.SHOW_TEXT);
+            let firstLine;
+            for (let node = text.nextNode(); node && !indicators.contains(node); node = text.nextNode()) {
+                const start = node.textContent.search(/\S/);
+                if (start === -1) continue;
+                const range = document.createRange();
+                range.setStart(node, start);
+                range.setEnd(node, start + 1);
+                firstLine = range.getBoundingClientRect();
+                if (firstLine.height && firstLine.width) break;
+            }
             indicators.hidden = false;
             const day = indicators.closest('.day');
             const icon = indicators.getBoundingClientRect();
             const rightEdge = day.getBoundingClientRect().right;
             const weather = day.querySelector('.weather')?.getBoundingClientRect();
-            indicators.hidden = icon.right > rightEdge || (weather && icon.right > weather.left && icon.left < weather.right);
+            const wrapped = !firstLine || icon.top >= firstLine.bottom || icon.bottom <= firstLine.top;
+            const grew = date.getBoundingClientRect().height > heightWithoutIndicators + .5;
+            indicators.hidden = wrapped || grew || icon.right > rightEdge
+                || (weather && icon.right > weather.left && icon.left < weather.right);
         });
-    }
+    };
 
     _stopBoundedLayout() {
         this._boundedObserver?.disconnect();
@@ -836,9 +859,7 @@ export class WeekPlannerCard extends LitElement {
                 seenInstants.add(instant.toMillis());
                 const date = instant.toLocal().toISODate();
                 if (!byDate.has(date)) byDate.set(date, []);
-                if (!byDate.get(date).some(indicator => indicator.phase === details.phase)) {
-                    byDate.get(date).push({ ...details, instant: instant.toMillis() });
-                }
+                byDate.get(date).push({ ...details, instant: instant.toMillis() });
             }
         }
         return byDate;

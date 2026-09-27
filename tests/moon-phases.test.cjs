@@ -70,3 +70,26 @@ test('same instant is deduplicated while distinct phases can share a day', () =>
     assert.equal(card._getMoonIndicatorsByDate().get('2026-09-28')[0].instant,
         DateTime.fromISO('2026-09-28T00:00:00Z').toMillis());
 });
+
+test('different instants of the same phase on one local date remain distinct', () => {
+    const previousZone = Settings.defaultZone;
+    Settings.defaultZone = 'Australia/Melbourne';
+    try {
+        const card = new Card();
+        card._moonPhases = { fullMoon: {
+            enabled: true, previousEntity: 'sensor.previous', nextEntity: 'sensor.next',
+        } };
+        card.hass = { states: {
+            'sensor.previous': { state: '2026-09-28T01:00:00+10:00' },
+            'sensor.next': { state: '2026-09-28T23:00:00+10:00' },
+        } };
+        const occurrences = card._getMoonIndicatorsByDate().get('2026-09-28');
+        assert.deepEqual(Array.from(occurrences, occurrence => occurrence.phase), ['full-moon', 'full-moon']);
+        assert.deepEqual(Array.from(occurrences, occurrence => occurrence.instant), [
+            DateTime.fromISO('2026-09-28T01:00:00+10:00').toMillis(),
+            DateTime.fromISO('2026-09-28T23:00:00+10:00').toMillis(),
+        ]);
+    } finally {
+        Settings.defaultZone = previousZone;
+    }
+});
