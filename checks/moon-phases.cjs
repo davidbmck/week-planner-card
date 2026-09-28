@@ -229,7 +229,7 @@ const server = http.createServer((request, response) => {
                 return { hidden: indicators.hidden, compact: card._compact,
                     cardClass: card.shadowRoot.querySelector('ha-card').className,
                     baseline, paintBottom: painted.bottom,
-                    hostBottom: host.bottom, svgBottom: svgBox.bottom,
+                    host: host.toJSON(), svg: svgBox.toJSON(),
                     numberSize: parseFloat(getComputedStyle(number).fontSize),
                     textSize: parseFloat(getComputedStyle(text).fontSize) };
             });
@@ -237,7 +237,12 @@ const server = http.createServer((request, response) => {
             assert.equal(alignment.compact, compact);
             assert.ok(alignment.numberSize > alignment.textSize, 'number is larger than weekday');
             assert.ok(Math.abs(alignment.paintBottom - alignment.baseline) < 2.5, JSON.stringify(alignment));
-            assert.ok(alignment.svgBottom <= alignment.hostBottom + .5, 'painted icon stays in its host box');
+            for (const edge of ['left', 'top']) {
+                assert.ok(alignment.svg[edge] >= alignment.host[edge] - .5, `SVG ${edge} stays inside its host`);
+            }
+            for (const edge of ['right', 'bottom']) {
+                assert.ok(alignment.svg[edge] <= alignment.host[edge] + .5, `SVG ${edge} stays inside its host`);
+            }
             assert.deepEqual(await headingGeometry(), before, 'aligned moon does not change heading geometry');
             sizes.push(alignment.numberSize);
         }

@@ -179,15 +179,14 @@ export class WeekPlannerCard extends LitElement {
             }
             indicators.hidden = false;
             const day = indicators.closest('.day');
-            // Check the rendered HA icon when available, since its SVG can sit
-            // below the host's box in an inline line box.
-            const painted = [...indicators.querySelectorAll('.day-indicator')].map(indicator =>
-                (indicator.shadowRoot?.querySelector('ha-svg-icon, svg') ?? indicator).getBoundingClientRect());
+            // The flex hosts contain their SVGs, so fitting needs only host bounds.
+            const bounds = [...indicators.querySelectorAll('.day-indicator')].map(indicator =>
+                indicator.getBoundingClientRect());
             const icon = {
-                left: Math.min(...painted.map(rect => rect.left)),
-                right: Math.max(...painted.map(rect => rect.right)),
-                top: Math.min(...painted.map(rect => rect.top)),
-                bottom: Math.max(...painted.map(rect => rect.bottom)),
+                left: Math.min(...bounds.map(rect => rect.left)),
+                right: Math.max(...bounds.map(rect => rect.right)),
+                top: Math.min(...bounds.map(rect => rect.top)),
+                bottom: Math.max(...bounds.map(rect => rect.bottom)),
             };
             const rightEdge = day.getBoundingClientRect().right;
             const weather = day.querySelector('.weather')?.getBoundingClientRect();
