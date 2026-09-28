@@ -179,7 +179,15 @@ export class WeekPlannerCard extends LitElement {
             }
             indicators.hidden = false;
             const day = indicators.closest('.day');
-            const icon = indicators.getBoundingClientRect();
+            // The flex hosts contain their SVGs, so fitting needs only host bounds.
+            const bounds = [...indicators.querySelectorAll('.day-indicator')].map(indicator =>
+                indicator.getBoundingClientRect());
+            const icon = {
+                left: Math.min(...bounds.map(rect => rect.left)),
+                right: Math.max(...bounds.map(rect => rect.right)),
+                top: Math.min(...bounds.map(rect => rect.top)),
+                bottom: Math.max(...bounds.map(rect => rect.bottom)),
+            };
             const rightEdge = day.getBoundingClientRect().right;
             const weather = day.querySelector('.weather')?.getBoundingClientRect();
             const wrapped = !firstLine || icon.top >= firstLine.bottom || icon.bottom <= firstLine.top;
