@@ -300,7 +300,7 @@ export default css`
     .container .day .day-indicators {
         display: inline-flex;
         align-items: center;
-        vertical-align: middle;
+        vertical-align: baseline;
         white-space: nowrap;
     }
 
@@ -317,6 +317,9 @@ export default css`
     }
 
     .day-indicator.moon-phase {
+        display: flex;
+        align-items: center;
+        justify-content: center;
         color: var(--secondary-text-color);
         opacity: .72;
     }

@@ -176,6 +176,72 @@ const server = http.createServer((request, response) => {
                 moon: getComputedStyle(card.shadowRoot.querySelector('.moon-phase')).opacity };
         });
         assert.deepEqual(styling, { container: '1', moon: '1' }, 'per-phase opacity is not reduced by the container');
+
+        // Match Home Assistant's nested ha-icon/ha-svg-icon baseline behaviour.
+        // An uncontained inline ha-svg-icon paints below its ha-icon host box.
+        await page.evaluate(() => {
+            assertNoHAIcon();
+            customElements.define('ha-svg-icon', class extends HTMLElement {
+                constructor() {
+                    super();
+                    this.attachShadow({ mode: 'open' }).innerHTML = `
+                        <style>
+                            :host { display: var(--ha-icon-display, inline-flex); vertical-align: middle;
+                                width: var(--mdc-icon-size, 24px); height: var(--mdc-icon-size, 24px);
+                                justify-content: center; align-items: center; }
+                            svg { display: block; width: 100%; height: 100%; }
+                        </style>
+                        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle></svg>`;
+                }
+            });
+            customElements.define('ha-icon', class extends HTMLElement {
+                constructor() {
+                    super();
+                    this.attachShadow({ mode: 'open' }).innerHTML = '<ha-svg-icon></ha-svg-icon>';
+                }
+            });
+            function assertNoHAIcon() {
+                if (customElements.get('ha-icon') || customElements.get('ha-svg-icon')) {
+                    throw new Error('baseline fixture needs its Home Assistant icon stand-in');
+                }
+            }
+        });
+        const sizes = [];
+        for (const compact of [true, false]) {
+            await create({ compact, texts: { today: 'Sun' } }, 250);
+            const before = await headingGeometry();
+            await showMoon();
+            const alignment = await page.evaluate(() => {
+                const date = card.shadowRoot.querySelector('.day .date');
+                const text = date.querySelector('.text');
+                const number = date.querySelector('.number');
+                const indicators = date.querySelector('.day-indicators');
+                const icon = indicators.querySelector('ha-icon');
+                const svg = icon.shadowRoot.querySelector('ha-svg-icon').shadowRoot.querySelector('svg');
+                const painted = svg.querySelector('circle').getBoundingClientRect();
+                const svgBox = svg.getBoundingClientRect();
+                const host = icon.getBoundingClientRect();
+                const probe = document.createElement('span');
+                probe.style.cssText = 'display:inline-block;width:0;height:0;padding:0;border:0;vertical-align:baseline';
+                text.after(probe);
+                const baseline = probe.getBoundingClientRect().top;
+                probe.remove();
+                return { hidden: indicators.hidden, compact: card._compact,
+                    cardClass: card.shadowRoot.querySelector('ha-card').className,
+                    baseline, paintBottom: painted.bottom,
+                    hostBottom: host.bottom, svgBottom: svgBox.bottom,
+                    numberSize: parseFloat(getComputedStyle(number).fontSize),
+                    textSize: parseFloat(getComputedStyle(text).fontSize) };
+            });
+            assert.equal(alignment.hidden, false, 'moon remains visible beside a mixed-size heading');
+            assert.equal(alignment.compact, compact);
+            assert.ok(alignment.numberSize > alignment.textSize, 'number is larger than weekday');
+            assert.ok(Math.abs(alignment.paintBottom - alignment.baseline) < 2.5, JSON.stringify(alignment));
+            assert.ok(alignment.svgBottom <= alignment.hostBottom + .5, 'painted icon stays in its host box');
+            assert.deepEqual(await headingGeometry(), before, 'aligned moon does not change heading geometry');
+            sizes.push(alignment.numberSize);
+        }
+        assert.ok(sizes[0] < sizes[1], 'compact and normal text sizes are both exercised');
         assert.deepEqual(errors, []);
         console.log('Moon phase browser checks passed.');
     } finally {
