@@ -154,10 +154,8 @@ Formats use [Luxon format tokens](https://moment.github.io/luxon/#/formatting?id
 | `dayFormat` | string | Unset | Replace the individual date heading. Formatted output is rendered as HTML; quote literal markup using Luxon's format syntax. |
 | `dateFormat` | string | `cccc d LLLL yyyy` | Date format in calendar event details. |
 | `timeFormat` | string | `HH:mm` | Time format for ordinary event times and calendar details. |
-| `multiDayTimeFormat` | string | Fallback `d LLL HH:mm` | Intended public format for multi-day times in `single`/`multiple` modes; currently ignored, as described below. |
+| `multiDayTimeFormat` | string | `d LLL HH:mm` | Format for multi-day times in `single`/`multiple` modes. |
 | `locale` | string | Luxon/environment default | A non-empty value sets Luxon's default locale for date/day/month formatting. If omitted, the card leaves that default unchanged; it normally follows the browser/system locale, or a default already set by another card using the same Luxon instance. The editor's initial template explicitly supplies `en`. |
-
-**Known limitation:** `multiDayTimeFormat` is exposed in the editor but currently ignored because `setConfig()` reads `config._multiDayTimeFormat`. The fallback is `d LLL HH:mm`. This is tracked in [configuration lookup bug #9](https://github.com/davidbmck/week-planner-card/issues/9); this documentation does not change runtime behaviour.
 
 ### Texts
 
@@ -331,7 +329,7 @@ Remove the old `card_mod` forced-height rule when enabling `height`; keep other 
 | `single` | Show only the first segment on or after the view's start date, using the original start and end with the multi-day time format. |
 | `multiple` | Show each day's segment, using the original start and end with the multi-day time format on each entry. |
 
-The current multi-day format fallback is `d LLL HH:mm`; the intended `multiDayTimeFormat` override is affected by [#9](https://github.com/davidbmck/week-planner-card/issues/9). In `single` mode, the first segment is chosen before weekend/all-day hiding, so hiding it does not move the event to a later visible day.
+The multi-day time format defaults to `d LLL HH:mm` and can be set with `multiDayTimeFormat`. In `single` mode, the first segment is chosen before weekend/all-day hiding, so hiding it does not move the event to a later visible day.
 
 ## Styling
 

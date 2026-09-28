@@ -544,7 +544,7 @@ export class WeekPlannerCard extends LitElement {
         this._dayFormat = config.dayFormat ?? null;
         this._dateFormat = config.dateFormat ?? 'cccc d LLLL yyyy';
         this._timeFormat = config.timeFormat ?? 'HH:mm';
-        this._multiDayTimeFormat = config._multiDayTimeFormat ?? 'd LLL HH:mm';
+        this._multiDayTimeFormat = config.multiDayTimeFormat ?? 'd LLL HH:mm';
         this._multiDayMode = config.multiDayMode ?? 'default';
         this._locationLink = config.locationLink ?? 'https://www.google.com/maps/search/?api=1&query=';
         this._showTitle = config.showTitle ?? true;
