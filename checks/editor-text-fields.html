@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<script type="module">
+  customElements.define('ha-entity-picker', class extends HTMLElement {});
+  await import('/dist/week-planner-card.js');
+  const editor = document.createElement('week-planner-card-editor');
+  editor.hass = {};
+  editor.setConfig({ calendars: [], height: 400, texts: { today: 'Now' } });
+  document.body.append(editor);
+  await editor.updateComplete;
+  window.editor = editor;
+  window.ready = true;
+</script>

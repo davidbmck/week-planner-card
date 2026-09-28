@@ -245,14 +245,15 @@ export class WeekPlannerCardEditor extends LitElement {
 
     addTextField(name, label, type, defaultValue) {
         return html`
-            <ha-textfield
-                name="${name}"
-                label="${label ?? name}"
-                type="${type ?? 'text'}"
-                value="${this.getConfigValue(name, defaultValue)}"
-                @keyup="${this._valueChanged}"
-                @change="${this._valueChanged}"
-            />
+            <label class="text-field">
+                <span>${label ?? name}</span>
+                <input
+                    name="${name}"
+                    type="${type ?? 'text'}"
+                    .value="${String(this.getConfigValue(name, defaultValue))}"
+                    @input="${this._valueChanged}"
+                >
+            </label>
         `;
     }
 
