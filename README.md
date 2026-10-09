@@ -242,6 +242,8 @@ Replace the navigation path with a dashboard/view that exists in your installati
 
 Forecast coverage depends on the weather entity; requesting 21 planner days does not create a 21-day forecast. The card subscribes to daily forecasts by default. Clicking the displayed forecast opens the weather entity's more-info dialog.
 
+Dates beyond the provider's forecast are left blank. Missing temperatures do not display as `Unknown`. A forecast with an `unknown` or `unavailable` condition does not show a broken icon; available temperature values can still appear when enabled.
+
 In the current source, weather subscription setup failures and missing forecast events do not block calendar refresh. Received forecasts update the display immediately when calendar loading is idle, or when an in-progress calendar refresh completes. Only one weather subscription is active or pending per card; it is released when the card leaves the page or HA disconnects, then re-established on return/reconnect. Last-known forecasts remain visible during temporary interruptions.
 
 `weather` accepts an entity string shorthand (condition icon only by default):

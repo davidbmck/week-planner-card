@@ -820,13 +820,13 @@ export class WeekPlannerCard extends LitElement {
                                     ${this._weather?.showTemperature || this._weather?.showLowTemperature ?
                                         html`
                                             <div class="temperature">
-                                                ${this._weather?.showTemperature ?
+                                                ${this._weather?.showTemperature && day.weather.temperature != null ?
                                                     html`
                                                         <span class="high">${day.weather.temperature}</span>
                                                     ` :
                                                     ''
                                                 }
-                                                ${this._weather?.showLowTemperature ?
+                                                ${this._weather?.showLowTemperature && day.weather.templow != null ?
                                                     html`
                                                             <span class="low">${day.weather.templow}</span>
                                                     ` :
@@ -1672,13 +1672,18 @@ export class WeekPlannerCard extends LitElement {
             }
 
             const dateKey = DateTime.fromISO(forecast.datetime).toISODate();
+            if (!dateKey) return;
+            const hasCondition = forecast.condition && !['unknown', 'unavailable'].includes(forecast.condition);
+            const hasTemperature = this._weather.showTemperature && Number.isFinite(forecast.temperature);
+            const hasLowTemperature = this._weather.showLowTemperature && Number.isFinite(forecast.templow);
+            if (!hasCondition && !hasTemperature && !hasLowTemperature) return;
             const temperature = this._weather.roundTemperature ? Math.round(forecast.temperature) : forecast.temperature;
             const templow = this._weather.roundTemperature ? Math.round(forecast.templow) : forecast.templow;
             weatherForecast[dateKey] = {
-                state: forecast.condition,
-                condition: this.hass.formatEntityState(weatherState, forecast.condition),
-                temperature: this.hass.formatEntityAttributeValue(weatherState, 'temperature', temperature),
-                templow: this.hass.formatEntityAttributeValue(weatherState, 'templow', templow)
+                state: hasCondition ? forecast.condition : null,
+                condition: hasCondition ? this.hass.formatEntityState(weatherState, forecast.condition) : null,
+                temperature: hasTemperature ? this.hass.formatEntityAttributeValue(weatherState, 'temperature', temperature) : null,
+                templow: hasLowTemperature ? this.hass.formatEntityAttributeValue(weatherState, 'templow', templow) : null
             };
         });
 

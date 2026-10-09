@@ -43,7 +43,7 @@ function setup(subscribe, calendarResponse) {
                 end: { dateTime: DateTime.now().startOf('day').plus({ hours: 13 }).toISO() },
             }]);
         },
-        formatEntityAttributeValue: (_state, attribute, value) => value ?? attribute,
+        formatEntityAttributeValue: (_state, _attribute, value) => value ?? 'Unknown',
         formatEntityState: (_state, value) => value,
     };
     return {
@@ -131,4 +131,54 @@ test('forecast received during calendar load displays when that load completes',
     assert.equal(run.card._days[0].weather.temperature, 22);
     run.nextRefresh();
     assert.equal(run.requests(), 2);
+});
+
+test('the day seven days ahead uses its forecast and stays blank beyond provider coverage', async () => {
+    let emit;
+    const run = setup(callback => { emit = callback; return Promise.resolve(() => {}); });
+    run.card.setConfig({
+        calendars: [{ entity: 'calendar.test' }],
+        weather: { entity: 'weather.test', showTemperature: true, roundTemperature: true },
+        days: 9,
+    });
+    run.card._updateEvents();
+    await run.finishRefresh();
+    const seventhDate = run.card._startDate.plus({ days: 7 });
+    emit({ forecast: [{
+        datetime: seventhDate.toISODate(), condition: 'sunny', temperature: 21.7,
+    }] });
+    assert.equal(run.card._days[7].weather.temperature, 22);
+    assert.equal(run.card._days[7].weather.state, 'sunny');
+    assert.equal(run.card._days[8].weather, null);
+    emit({ forecast: [] });
+    assert.equal(run.card._days[7].weather, null);
+});
+
+test('unknown conditions do not render as broken weather icons', async () => {
+    let emit;
+    const run = setup(callback => { emit = callback; return Promise.resolve(() => {}); });
+    run.card._updateEvents();
+    await run.finishRefresh();
+    emit({ forecast: [{
+        datetime: run.card._startDate.toISODate(), condition: 'unknown', temperature: 21.7,
+    }] });
+    assert.equal(run.card._days[0].weather.temperature, 22);
+    assert.equal(run.card._days[0].weather.state, null);
+    assert.equal(run.card._getWeatherIcon(run.card._days[0].weather.state), null);
+    emit({ forecast: [{ datetime: run.card._startDate.toISODate(), condition: 'unavailable' }] });
+    assert.equal(run.card._days[0].weather, null);
+});
+
+test('a final-day forecast without a high temperature never displays Unknown', async () => {
+    let emit;
+    const run = setup(callback => { emit = callback; return Promise.resolve(() => {}); });
+    run.card.setConfig({
+        calendars: [{ entity: 'calendar.test' }],
+        weather: { entity: 'weather.test', showTemperature: true, roundTemperature: true },
+        days: 8,
+    });
+    run.card._updateEvents();
+    await run.finishRefresh();
+    emit({ forecast: [{ datetime: run.card._startDate.plus({ days: 7 }).toISODate() }] });
+    assert.equal(run.card._days[7].weather, null);
 });
