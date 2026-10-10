@@ -4,7 +4,7 @@
 [![Validate Build](https://github.com/davidbmck/week-planner-card/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/davidbmck/week-planner-card/actions/workflows/build.yml)
 [![Licence](https://img.shields.io/github/license/davidbmck/week-planner-card)](LICENSE)
 
-A custom Home Assistant card showing a responsive overview of calendar entities, todo-list entities with due dates, and optional weather forecasts.
+A custom Home Assistant dashboard card showing calendars, dated todo items, and optional weather forecasts in a responsive planner. Opt-in fixed-height layouts and moon phase indicators are available for wall and kiosk dashboards.
 
 ![Example Week Planner Cards](examples/card.png)
 
@@ -13,6 +13,7 @@ A custom Home Assistant card showing a responsive overview of calendar entities,
 - [About this fork](#about-this-fork)
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [Moon phases](#moon-phases)
 - [Calendars and todo lists](#calendars-and-todo-lists)
 - [Actions](#actions)
 - [Weather](#weather)
@@ -27,18 +28,16 @@ A custom Home Assistant card showing a responsive overview of calendar entities,
 
 This is an independent maintained fork of [FamousWolf/week-planner-card](https://github.com/FamousWolf/week-planner-card), originally created by Rudy Gnodde. It is not an official continuation or replacement for the original project.
 
-This fork started from [bentemple/week-planner-card](https://github.com/bentemple/week-planner-card) v1.15.1. Benjamin Temple's fork added todo-list support in v1.15.0 and the Home Assistant 2026 event-dialog header compatibility fix in v1.15.1. Our v1.15.2 baseline deliberately introduced no runtime behaviour changes; it established this fork's independent build, release and installation path.
+This fork started from [bentemple/week-planner-card](https://github.com/bentemple/week-planner-card) v1.15.1. Benjamin Temple's fork added todo-list support in v1.15.0 and the Home Assistant 2026 event-dialog header compatibility fix in v1.15.1. Our v1.15.2 baseline established this fork's independent build, release and installation path without changing runtime behaviour.
 
-The maintenance direction is to:
+The current stable release, [v1.16.0](https://github.com/davidbmck/week-planner-card/releases/tag/v1.16.0), includes:
 
-- Keep the card compatible with current Home Assistant frontend changes.
-- Improve long-running reliability, especially on wall and kiosk dashboards, so refresh, network and weather failures recover automatically instead of leaving the card stuck.
-- Preserve existing `custom:week-planner-card` YAML compatibility wherever practical.
-- Make focused, reviewable changes rather than a wholesale rewrite.
-- Improve fixed-layout and kiosk behaviour, including opt-in bounded-height handling.
-- Accept sensible compatibility and maintenance improvements that fit these goals.
+- More reliable calendar, todo and weather updates, with recovery after failed requests, network interruptions and Home Assistant reconnects. Valid events stay visible during transient failures.
+- Optional [fixed-height layouts](#fixed-height-layouts) that fit or count overflowing events within a set card height.
+- Optional [moon phase indicators](#moon-phases) beside day headings, using Home Assistant timestamp entities.
+- Visual editor fixes for current Home Assistant, support for the configured multi-day time format, and clearer handling of missing forecast values.
 
-Weather independence ([#2](https://github.com/davidbmck/week-planner-card/issues/2)), async calendar scheduling ([#3](https://github.com/davidbmck/week-planner-card/issues/3)), calendar refresh failure recovery ([#4](https://github.com/davidbmck/week-planner-card/issues/4)), browser/connection lifecycle recovery ([#5](https://github.com/davidbmck/week-planner-card/issues/5)), and opt-in [fixed-height layouts](#fixed-height-layouts) ([#6](https://github.com/davidbmck/week-planner-card/issues/6)) are addressed in the current source. These are follow-on improvements, not features delivered by the v1.15.2 baseline; see [releases](https://github.com/davidbmck/week-planner-card/releases) for published versions.
+Fixed-height layouts and moon phases are opt-in. Existing `custom:week-planner-card` YAML remains compatible. Maintenance continues to focus on current Home Assistant compatibility and reliable wall and kiosk use through focused changes.
 
 ## Installation
 
@@ -438,7 +437,7 @@ texts:
 
 ### Fixed seven-column kiosk layout
 
-This fixes the column count, not the height. Bounded-height handling remains planned work.
+This fixes the column count. Add `height` for a bounded layout; see [fixed-height layouts](#fixed-height-layouts).
 
 ```yaml
 type: custom:week-planner-card
